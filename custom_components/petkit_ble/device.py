@@ -114,11 +114,16 @@ class PetkitFountain:
         self._history_callbacks.append(cb)
 
     @property
+    def is_connected(self) -> bool:
+        """Whether a usable link is currently held."""
+        return self._client is not None and self._client.is_connected
+
+    @property
     def claimed(self) -> bool:
         """Whether we hold a secret this fountain has accepted."""
         return self.secret is not None
 
-    async def async_poll(self, ble_device: BLEDevice) -> dict[str, Any]:
+    async def async_poll(self, ble_device: BLEDevice | None) -> dict[str, Any]:
         """Refresh state and return it."""
 
         async def _poll() -> dict[str, Any]:
@@ -139,7 +144,7 @@ class PetkitFountain:
         return await self._with_link(ble_device, _poll)
 
     async def async_send(
-        self, ble_device: BLEDevice, cmd: int, payload: bytes = b""
+        self, ble_device: BLEDevice | None, cmd: int, payload: bytes = b""
     ) -> None:
         """Run a single command, then refresh status so the UI settles."""
 
@@ -153,31 +158,31 @@ class PetkitFountain:
 
     # --- high-level commands -------------------------------------------
 
-    async def async_set_power(self, ble_device: BLEDevice, on: bool) -> None:
+    async def async_set_power(self, ble_device: BLEDevice | None, on: bool) -> None:
         mode = self.state.get("mode") or MODE_NORMAL
         await self.async_send(
             ble_device, p.CMD_SET_MODE, p.mode_payload(on, mode, p.SELECTOR_POWER_MODE)
         )
 
-    async def async_set_mode(self, ble_device: BLEDevice, mode: int) -> None:
+    async def async_set_mode(self, ble_device: BLEDevice | None, mode: int) -> None:
         await self.async_send(
             ble_device,
             p.CMD_SET_MODE,
             p.mode_payload(True, mode, p.SELECTOR_POWER_MODE),
         )
 
-    async def async_set_paused(self, ble_device: BLEDevice, paused: bool) -> None:
+    async def async_set_paused(self, ble_device: BLEDevice | None, paused: bool) -> None:
         await self.async_send(
             ble_device,
             p.CMD_SET_MODE,
             p.mode_payload(True, 0 if paused else 1, p.SELECTOR_RUN_PAUSE),
         )
 
-    async def async_reset_filter(self, ble_device: BLEDevice) -> None:
+    async def async_reset_filter(self, ble_device: BLEDevice | None) -> None:
         await self.async_send(ble_device, p.CMD_RESET_FILTER)
 
     async def async_update_settings(
-        self, ble_device: BLEDevice, **changes: int
+        self, ble_device: BLEDevice | None, **changes: int
     ) -> None:
         """Change one or more settings.
 
@@ -201,7 +206,7 @@ class PetkitFountain:
     # --- session -------------------------------------------------------
 
     async def _with_link(
-        self, ble_device: BLEDevice, action: Callable[[], Any], attempts: int = 2
+        self, ble_device: BLEDevice | None, action: Callable[[], Any], attempts: int = 2
     ) -> Any:
         """Run `action` over a live, authenticated link.
 
@@ -241,9 +246,14 @@ class PetkitFountain:
                 raise last
             raise PetkitConnectionError(str(last)) from last
 
-    async def _connect(self, ble_device: BLEDevice) -> None:
+    async def _connect(self, ble_device: BLEDevice | None) -> None:
         if self._client is not None and self._client.is_connected:
             return
+        if ble_device is None:
+            # Only reachable if the link dropped after the caller checked.
+            raise PetkitConnectionError(
+                f"{self.address} is not in range and no connection is held"
+            )
 
         self._decoder.reset()
         try:

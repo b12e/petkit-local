@@ -405,3 +405,43 @@ async def test_history_header_parsing_matches_the_device(fountain, patched_conne
 
     header = p.parse_history_header(bytes.fromhex("010000004E"))
     assert header["pending_bytes"] == 78  # 13 records
+
+
+async def test_poll_works_without_a_ble_device_when_connected(fountain, patched_connection):
+    """A connected fountain stops advertising, so no BLEDevice is available.
+
+    Regression test: requiring one made every entity flick to unavailable once
+    per poll while the link was held open.
+    """
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    await client.async_poll(BLE_DEVICE)
+    assert client.is_connected
+
+    # The registry can no longer find it, so the coordinator passes None.
+    state = await client.async_poll(None)
+    assert state["battery_percent"] == 88
+
+
+async def test_poll_without_device_or_connection_fails(monkeypatch, fountain):
+    """With nothing to reuse, being absent from the registry is a real error."""
+    from custom_components.petkit_ble import device as device_module
+
+    async def _establish(*_args, **_kwargs):
+        raise AssertionError("should not try to connect without a device")
+
+    monkeypatch.setattr(device_module, "establish_connection", _establish)
+    monkeypatch.setattr(device_module, "RECONNECT_DELAY", 0)
+
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    assert not client.is_connected
+    with pytest.raises(PetkitConnectionError):
+        await client.async_poll(None)
+
+
+async def test_is_connected_tracks_teardown(fountain, patched_connection):
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    await client.async_poll(BLE_DEVICE)
+    assert client.is_connected
+
+    await client.async_disconnect()
+    assert not client.is_connected

@@ -19,6 +19,9 @@ from .visits import VisitTracker
 
 _LOGGER = logging.getLogger(__name__)
 
+# How many polls in a row must fail before entities are marked unavailable.
+MAX_TRANSIENT_FAILURES = 3
+
 
 class PetkitBleCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Polls one fountain over BLE and relays its pushes."""
@@ -40,6 +43,7 @@ class PetkitBleCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.fountain = fountain
         self.rssi: int | None = None
         self.visits = VisitTracker()
+        self._failures = 0
         fountain.register_push_callback(self._on_push)
         fountain.register_history_callback(self._on_history)
 
@@ -63,20 +67,47 @@ class PetkitBleCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         self.visits.update(bool(detected), dt_util.now())
 
-    def _ble_device(self) -> BLEDevice:
+    def _ble_device(self) -> BLEDevice | None:
+        """Find the fountain, or None if we can carry on without it.
+
+        A connected peripheral usually stops advertising, so once the link is
+        held open Home Assistant's registry can no longer produce a BLEDevice
+        for it. That is expected, not a failure: the existing connection is
+        reused and no lookup is needed. Only when there is nothing to reuse
+        does being absent from the registry actually block us.
+        """
         device = bluetooth.async_ble_device_from_address(
             self.hass, self.fountain.address, connectable=True
         )
-        if device is None:
-            raise UpdateFailed(
-                f"{self.fountain.address} is not in range of any Bluetooth adapter "
-                "or proxy"
+        if device is not None:
+            return device
+        if self.fountain.is_connected:
+            return None
+        raise PetkitConnectionError(
+            f"{self.fountain.address} is not in range of any Bluetooth adapter or proxy"
+        )
+
+    def _tolerate(self, reason: str) -> dict[str, Any]:
+        """Ride out a blip instead of blanking every entity.
+
+        A fountain drops off the Bluetooth registry for a moment whenever the
+        proxy it lives behind hiccups. Failing the update on the first miss made
+        every sensor flick to unavailable and back, so brief trouble now keeps
+        the last known state and only sustained trouble is surfaced.
+        """
+        self._failures += 1
+        if self.data and self._failures < MAX_TRANSIENT_FAILURES:
+            _LOGGER.debug(
+                "%s: transient failure %s/%s, keeping last state: %s",
+                self.fountain.address,
+                self._failures,
+                MAX_TRANSIENT_FAILURES,
+                reason,
             )
-        return device
+            return self.data
+        raise UpdateFailed(reason)
 
     async def _async_update_data(self) -> dict[str, Any]:
-        device = self._ble_device()
-
         service_info = bluetooth.async_last_service_info(
             self.hass, self.fountain.address, connectable=True
         )
@@ -84,13 +115,17 @@ class PetkitBleCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.rssi = service_info.rssi
 
         try:
+            device = self._ble_device()
             state = await self.fountain.async_poll(device)
-            self._track_visit(state)
-            return state
         except PetkitAuthError as err:
+            # A rejected secret will not fix itself; surface it immediately.
             raise UpdateFailed(f"authentication failed: {err}") from err
         except (PetkitConnectionError, TimeoutError) as err:
-            raise UpdateFailed(f"communication failed: {err}") from err
+            return self._tolerate(str(err))
+
+        self._failures = 0
+        self._track_visit(state)
+        return state
 
     @callback
     def async_assume(self, **values: Any) -> None:
@@ -106,10 +141,10 @@ class PetkitBleCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_run(self, action: str, **kwargs: Any) -> None:
         """Run a command on the fountain, then push fresh state to entities."""
-        device = self._ble_device()
         fountain = self.fountain
 
         try:
+            device = self._ble_device()
             match action:
                 case "power":
                     await fountain.async_set_power(device, kwargs["on"])
