@@ -1,0 +1,191 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Add a PetKit fountain",
+        "description": "Pick a fountain that is currently advertising. Leave the secret blank to let Home Assistant claim the device with its own key.",
+        "data": {
+          "address": "Fountain",
+          "secret": "Secret (optional)"
+        },
+        "data_description": {
+          "secret": "16 hex characters. Only needed if you want to reuse the key PetKit assigned, so the official app keeps working."
+        }
+      },
+      "confirm": {
+        "title": "Add {name}",
+        "description": "Set up {name} ({address}) for local Bluetooth control?\n\nLeaving the secret blank lets Home Assistant claim the fountain with its own key. The PetKit app will then need the fountain power-cycled before it can reconnect.",
+        "data": {
+          "secret": "Secret (optional)"
+        },
+        "data_description": {
+          "secret": "16 hex characters. Only needed if you want to reuse the key PetKit assigned, so the official app keeps working."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This fountain is already set up.",
+      "no_devices_found": "No PetKit fountains are advertising nearby. Bring the fountain closer to a Bluetooth adapter or proxy and try again.",
+      "not_supported": "This PetKit device does not support local Bluetooth control."
+    },
+    "error": {
+      "invalid_secret": "The secret must be 8 bytes as 16 hex characters, for example a1b2c3d4e5f60718."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Fountain options",
+        "data": {
+          "scan_interval": "Poll interval (seconds)"
+        },
+        "data_description": {
+          "scan_interval": "How often to connect and read state. Longer intervals save battery on cordless models."
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "water_missing": {
+        "name": "Water low"
+      },
+      "filter_warning": {
+        "name": "Filter"
+      },
+      "breakdown": {
+        "name": "Fault"
+      },
+      "low_battery": {
+        "name": "Battery low"
+      },
+      "pet_detected": {
+        "name": "Pet detected"
+      },
+      "mains_powered": {
+        "name": "Mains power"
+      },
+      "night_dnd_active": {
+        "name": "Do not disturb active"
+      }
+    },
+    "button": {
+      "reset_filter": {
+        "name": "Reset filter"
+      }
+    },
+    "number": {
+      "smart_working_time": {
+        "name": "Smart mode run time"
+      },
+      "smart_sleep_time": {
+        "name": "Smart mode sleep time"
+      },
+      "battery_working_time": {
+        "name": "Battery run time"
+      },
+      "battery_sleep_time": {
+        "name": "Battery sleep time"
+      }
+    },
+    "select": {
+      "mode": {
+        "name": "Mode",
+        "state": {
+          "normal": "Normal",
+          "smart": "Smart"
+        }
+      },
+      "light_brightness": {
+        "name": "Light brightness",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
+      }
+    },
+    "sensor": {
+      "battery_percent": {
+        "name": "Battery"
+      },
+      "battery_voltage": {
+        "name": "Battery voltage"
+      },
+      "supply_voltage": {
+        "name": "Supply voltage"
+      },
+      "filter_percent": {
+        "name": "Filter remaining"
+      },
+      "filter_days_left": {
+        "name": "Filter days left"
+      },
+      "pump_runtime_today": {
+        "name": "Pump runtime today"
+      },
+      "pump_runtime": {
+        "name": "Pump runtime total"
+      },
+      "water_purified_today": {
+        "name": "Water purified today"
+      },
+      "water_purified": {
+        "name": "Water purified total"
+      },
+      "energy_consumed": {
+        "name": "Energy used"
+      },
+      "mode": {
+        "name": "Mode",
+        "state": {
+          "normal": "Normal",
+          "smart": "Smart"
+        }
+      },
+      "running_status": {
+        "name": "Pump state",
+        "state": {
+          "idle": "Idle",
+          "running": "Running",
+          "paused": "Paused"
+        }
+      },
+      "light_brightness_level": {
+        "name": "Light level",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
+      },
+      "rssi": {
+        "name": "Signal strength"
+      }
+    },
+    "switch": {
+      "power": {
+        "name": "Power"
+      },
+      "running": {
+        "name": "Pump"
+      },
+      "light": {
+        "name": "Light ring"
+      },
+      "do_not_disturb": {
+        "name": "Do not disturb"
+      },
+      "child_lock": {
+        "name": "Child lock"
+      },
+      "smart_proximity": {
+        "name": "Smart mode proximity"
+      },
+      "battery_proximity": {
+        "name": "Battery mode proximity"
+      }
+    }
+  }
+}
