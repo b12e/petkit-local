@@ -1,5 +1,8 @@
 # PetKit BLE (local)
 
+[![Validate](https://github.com/b12e/petkit-local/actions/workflows/validate.yml/badge.svg)](https://github.com/b12e/petkit-local/actions/workflows/validate.yml)
+[![hacs](https://img.shields.io/badge/HACS-custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
+
 A Home Assistant integration that talks to PetKit Eversweet fountains **directly over
 Bluetooth**. No PetKit account, no cloud round-trip, no second PetKit device acting as
 a relay.
