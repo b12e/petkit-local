@@ -33,6 +33,7 @@ from .const import (
     DEVICE_MODELS,
     DOMAIN,
     NAME_PREFIXES,
+    SECRET_LENGTH,
     SUPPORTED_ALIASES,
 )
 from .protocol import parse_service_data
@@ -41,11 +42,17 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class InvalidSecret(Exception):
-    """The pasted secret is not 8 bytes of hex."""
+    """The pasted secret is not usable hex."""
 
 
 def _normalise_secret(raw: str | None) -> str | None:
-    """Accept the secret in the shapes people actually paste it in."""
+    """Accept the secret in the shapes people actually paste it in.
+
+    The API hands these out shorter than the 8 bytes the firmware wants - a
+    CTW3 returns 6 - and the app left-pads with zeros before sending them
+    (``ByteUtil.makeUpBtyesForward``). Pad here so everything downstream sees
+    a uniform 8 bytes.
+    """
     if not raw or not raw.strip():
         return None
     cleaned = raw.strip().lower().replace(" ", "").replace(":", "").replace("-", "")
@@ -54,9 +61,9 @@ def _normalise_secret(raw: str | None) -> str | None:
         value = bytes.fromhex(cleaned)
     except ValueError as err:
         raise InvalidSecret from err
-    if len(value) != 8:
+    if not 1 <= len(value) <= SECRET_LENGTH:
         raise InvalidSecret
-    return value.hex()
+    return value.rjust(SECRET_LENGTH, b"\x00").hex()
 
 
 def _identify(info: BluetoothServiceInfoBleak) -> dict[str, Any] | None:

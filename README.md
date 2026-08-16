@@ -45,18 +45,50 @@ Bluetooth adapter or an ESPHome Bluetooth proxy. If it is not, add it from
 
 ## The secret, and what setup does to the PetKit app
 
-Every fountain holds an 8-byte secret that is written when the device is bound and checked
-on each connection. You have two options.
+Every fountain holds a secret that is written when the device is bound and checked on each
+connection. You have two options at setup.
 
 **Leave the secret blank (default).** Home Assistant derives its own key and claims the
-fountain with it. Nothing needs the cloud, ever. The trade-off: the official PetKit app
-loses its own claim, and the fountain needs a power cycle before the app can reconnect.
-Pick this if Home Assistant is going to be the only thing talking to the fountain.
+fountain with it. Nothing ever contacts PetKit. The trade-off: the official app loses its
+claim, and the fountain needs a power cycle before the app can reconnect. Pick this if Home
+Assistant will be the only thing talking to the fountain.
 
-**Paste PetKit's own secret.** Read it once from the account API - it is the `secret`
-field on the water fountain object, which `pypetkitapi` exposes - and enter it as 16 hex
-characters during setup. Both the app and Home Assistant then keep working. Re-binding the
-fountain in the app rotates it, and the integration will re-claim on the next failure.
+**Paste PetKit's own secret.** Both the app and Home Assistant then keep working. Re-binding
+the fountain in the app rotates the key, and the integration re-claims on the next failure.
+
+### Getting the secret from your account
+
+It is the `secret` field on the water fountain object in the PetKit API. One way to read it:
+
+```bash
+pip install pypetkitapi aiohttp
+```
+
+```python
+import asyncio, aiohttp
+from pypetkitapi import PetKitClient
+from pypetkitapi.water_fountain_container import WaterFountain
+
+async def main():
+    async with aiohttp.ClientSession() as session:
+        client = PetKitClient(
+            username="you@example.com", password="...",
+            region="BE", timezone="Europe/Brussels", session=session,
+        )
+        await client.get_devices_data()
+        for device in client.petkit_entities.values():
+            if isinstance(device, WaterFountain):
+                print(device.name, device.mac, device.secret)
+
+asyncio.run(main())
+```
+
+Note that `PetKitClient` needs an explicit `session=` - without one it fails with an
+unhelpful `'NoneType' object has no attribute 'request'`.
+
+The value comes back **shorter than the 8 bytes the firmware wants** - a CTW3 returns 6
+bytes, 12 hex characters, like `1a2b3c4d5e6f`. That is expected. The integration left-pads
+it with zeros exactly as the app's `ByteUtil.makeUpBtyesForward` does, so paste it as-is.
 
 ## Entities
 

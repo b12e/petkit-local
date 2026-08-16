@@ -89,13 +89,34 @@ def test_accepts_common_secret_formats(raw):
     assert _normalise_secret(raw) == "a1b2c3d4e5f60718"
 
 
+def test_accepts_six_byte_secret_from_the_api():
+    """A real CTW3 secret is 6 bytes; the firmware wants 8, left-padded.
+
+    Regression test: rejecting these made the cloud-secret path unusable on
+    the exact device this integration was written for.
+    """
+    assert _normalise_secret("1a2b3c4d5e6f") == "00001a2b3c4d5e6f"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("01", "0000000000000001"),
+        ("1a2b3c4d5e6f", "00001a2b3c4d5e6f"),
+        ("1a:2b:3c:4d:5e:6f", "00001a2b3c4d5e6f"),
+        ("a1b2c3d4e5f60718", "a1b2c3d4e5f60718"),
+    ],
+)
+def test_short_secrets_are_left_padded(raw, expected):
+    assert _normalise_secret(raw) == expected
+
+
 @pytest.mark.parametrize(
     "raw",
     [
         "nothex",
-        "a1b2",              # too short
-        "a1b2c3d4e5f6071812",  # too long
-        "a1b2c3d4e5f6071",   # odd length
+        "a1b2c3d4e5f6071812",  # longer than 8 bytes
+        "a1b2c3d4e5f6071",  # odd number of hex digits
     ],
 )
 def test_rejects_bad_secrets(raw):

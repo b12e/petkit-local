@@ -10,7 +10,7 @@
           "secret": "Secret (optional)"
         },
         "data_description": {
-          "secret": "16 hex characters. Only needed if you want to reuse the key PetKit assigned, so the official app keeps working."
+          "secret": "Hex from the PetKit API (a CTW3 returns 12 characters). Only needed if you want to reuse the key PetKit assigned, so the official app keeps working."
         }
       },
       "confirm": {
@@ -20,7 +20,7 @@
           "secret": "Secret (optional)"
         },
         "data_description": {
-          "secret": "16 hex characters. Only needed if you want to reuse the key PetKit assigned, so the official app keeps working."
+          "secret": "Hex from the PetKit API (a CTW3 returns 12 characters). Only needed if you want to reuse the key PetKit assigned, so the official app keeps working."
         }
       }
     },
@@ -30,7 +30,7 @@
       "not_supported": "This PetKit device does not support local Bluetooth control."
     },
     "error": {
-      "invalid_secret": "The secret must be 8 bytes as 16 hex characters, for example a1b2c3d4e5f60718."
+      "invalid_secret": "The secret must be hex, up to 8 bytes. The value from the PetKit API is usually 12 characters, for example 1a2b3c4d5e6f."
     }
   },
   "options": {
