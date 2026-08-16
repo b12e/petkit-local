@@ -157,7 +157,9 @@ class PetkitFountain:
 
             try:
                 settings = await self._request(p.CMD_SETTINGS)
-                self._apply_settings(p.parse_settings(settings.payload))
+                parsed = p.parse_settings(settings.payload)
+                self._apply_settings(parsed)
+                _LOGGER.debug("%s: settings %s", self.address, parsed)
             except (TimeoutError, p.ProtocolError) as err:
                 # Non-fatal: status alone still yields a usable device.
                 _LOGGER.debug("%s: settings read failed: %s", self.address, err)

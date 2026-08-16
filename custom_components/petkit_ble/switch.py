@@ -34,14 +34,12 @@ SETTING_SWITCHES: tuple[SwitchEntityDescription, ...] = (
         key="smart_proximity",
         translation_key="smart_proximity",
         entity_category=EntityCategory.CONFIG,
-        entity_registry_enabled_default=False,
         icon="mdi:motion-sensor",
     ),
     SwitchEntityDescription(
         key="battery_proximity",
         translation_key="battery_proximity",
         entity_category=EntityCategory.CONFIG,
-        entity_registry_enabled_default=False,
         icon="mdi:motion-sensor",
     ),
 )
