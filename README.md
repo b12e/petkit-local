@@ -170,6 +170,7 @@ were verified against the decompiled PetKit app; where the two disagreed, the ap
 
 ## Disclaimer
 
-Not affiliated with PetKit. Derived from static analysis of the shipped Android app for
-interoperability. Claiming a device with your own secret changes state on the hardware -
-read the section above before you set it up.
+Not affiliated with, endorsed by, or supported by PetKit. Derived from static analysis of
+the shipped Android app for interoperability. The PetKit name and logo belong to PetKit and
+are used only to identify which devices this integration works with. Claiming a device with
+your own secret changes state on the hardware - read the section above before you set it up.
