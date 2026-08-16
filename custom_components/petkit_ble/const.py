@@ -15,6 +15,10 @@ SERVICE_UUID: Final = "0000aaa0-0000-1000-8000-00805f9b34fb"
 WRITE_UUID: Final = "0000aaa2-0000-1000-8000-00805f9b34fb"
 NOTIFY_UUID: Final = "0000aaa1-0000-1000-8000-00805f9b34fb"
 
+# The firmware always wants 8 bytes. The cloud hands out shorter secrets
+# (a CTW3 returns 6), which the app left-pads with zeros before sending.
+SECRET_LENGTH: Final = 8
+
 # --- Config entry keys --------------------------------------------------
 CONF_ADDRESS: Final = "address"
 CONF_SECRET: Final = "secret"
