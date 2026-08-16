@@ -17,6 +17,7 @@ from .const import (
     CONF_SECRET,
     DEFAULT_KEEP_ALIVE,
     DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
 )
 from .coordinator import PetkitBleCoordinator
 from .device import PetkitFountain
@@ -54,24 +55,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: PetkitBleConfigEntry) ->
         entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
     )
 
-    await coordinator.async_config_entry_first_refresh()
-
-    # The secret is only known after the first successful handshake; persist it
-    # so a later restart reuses the same claim instead of re-writing cmd 73.
-    if fountain.secret is not None and not secret_hex:
-        hass.config_entries.async_update_entry(
-            entry,
-            data={
-                **entry.data,
-                CONF_SECRET: fountain.secret.hex(),
-                CONF_DEVICE_ID: fountain.device_id,
-            },
-        )
-
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
+
+    # Reaching the fountain can take a while - it may be asleep, or the
+    # Bluetooth proxy it lives behind may still be booting. Doing that inline
+    # held up Home Assistant startup for minutes, so the first poll runs in the
+    # background and entities stay unavailable until it lands.
+    entry.async_create_background_task(
+        hass,
+        _async_first_refresh(hass, entry, coordinator, bool(secret_hex)),
+        f"{DOMAIN} first refresh {address}",
+    )
     return True
+
+
+async def _async_first_refresh(
+    hass: HomeAssistant,
+    entry: PetkitBleConfigEntry,
+    coordinator: PetkitBleCoordinator,
+    had_secret: bool,
+) -> None:
+    """Populate state, then persist anything the handshake taught us."""
+    await coordinator.async_refresh()
+
+    fountain = coordinator.fountain
+    # The secret is only known after a successful handshake; persist it so a
+    # later restart reuses the same claim instead of re-writing cmd 73.
+    if fountain.secret is None or had_secret:
+        return
+
+    hass.config_entries.async_update_entry(
+        entry,
+        data={
+            **entry.data,
+            CONF_SECRET: fountain.secret.hex(),
+            CONF_DEVICE_ID: fountain.device_id,
+        },
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: PetkitBleConfigEntry) -> bool:

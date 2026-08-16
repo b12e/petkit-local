@@ -94,6 +94,8 @@ class PetkitFountain:
         self._history_callbacks: list[Callable[[list[p.WorkRecord]], None]] = []
         self._stream_chunks: dict[int, bytes] = {}
         self._stream_total = 0
+        self._stream_frames_seen = 0
+        self._records_this_sync = 0
         self._idle_task: asyncio.Task | None = None
         # Written with a response by default, matching the app. Downgraded only
         # if the characteristic turns out not to support it.
@@ -374,10 +376,21 @@ class PetkitFountain:
         """
         self._stream_chunks.clear()
         self._stream_total = 0
+        self._stream_frames_seen = 0
+        self._records_this_sync = 0
         try:
-            await self._request(p.CMD_HISTORY)
+            frame = await self._request(p.CMD_HISTORY)
         except (TimeoutError, PetkitConnectionError, p.ProtocolError) as err:
             _LOGGER.debug("%s: history sync failed: %s", self.address, err)
+            return
+
+        # Chunks arrive asynchronously afterwards; the outcome is logged when
+        # the device closes the stream, so nothing is blocked waiting here.
+        _LOGGER.debug(
+            "%s: history sync requested, cmd 212 replied %s",
+            self.address,
+            frame.payload.hex() or "<empty>",
+        )
 
     async def _claim(self) -> None:
         assert self.device_id is not None and self.secret is not None
@@ -433,6 +446,7 @@ class PetkitFountain:
         if frame.is_stream and frame.cmd in p.STREAM_DATA_CMDS:
             self._stream_chunks[frame.index] = frame.payload
             self._stream_total = frame.total or self._stream_total
+            self._stream_frames_seen += 1
             return
 
         if frame.type == p.TYPE_REQUEST:
@@ -486,6 +500,12 @@ class PetkitFountain:
             self._stream_chunks.clear()
             self._emit_records(payload)
 
+        _LOGGER.debug(
+            "%s: history sync done - %s stream frame(s), %s record(s)",
+            self.address,
+            self._stream_frames_seen,
+            self._records_this_sync,
+        )
         self._stream_total = 0
         ack = p.build_frame(
             p.CMD_STREAM_END, b"", seq=frame.seq, msg_type=p.TYPE_RESPONSE
@@ -495,7 +515,13 @@ class PetkitFountain:
     def _emit_records(self, payload: bytes) -> None:
         """Hand decoded visit records to whoever is listening."""
         records = p.parse_work_records(payload)
+        self._records_this_sync += len(records)
         if not records:
+            _LOGGER.debug(
+                "%s: history chunk held no records (%s bytes)",
+                self.address,
+                len(payload),
+            )
             return
         _LOGGER.debug(
             "%s: %s history record(s), first raw_time=%s stay=%ss",

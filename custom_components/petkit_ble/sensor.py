@@ -105,7 +105,9 @@ SENSORS: tuple[PetkitSensorDescription, ...] = (
         translation_key="water_purified_today",
         device_class=SensorDeviceClass.WATER,
         native_unit_of_measurement=UnitOfVolume.LITERS,
-        state_class=SensorStateClass.MEASUREMENT,
+        # WATER rejects MEASUREMENT; the daily figure resets, so it is
+        # TOTAL_INCREASING rather than a plain TOTAL.
+        state_class=SensorStateClass.TOTAL_INCREASING,
         suggested_display_precision=2,
         icon="mdi:water-check",
     ),
