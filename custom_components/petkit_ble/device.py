@@ -380,17 +380,31 @@ class PetkitFountain:
         self._records_this_sync = 0
         try:
             frame = await self._request(p.CMD_HISTORY)
+            header = p.parse_history_header(frame.payload)
         except (TimeoutError, PetkitConnectionError, p.ProtocolError) as err:
             _LOGGER.debug("%s: history sync failed: %s", self.address, err)
             return
 
-        # Chunks arrive asynchronously afterwards; the outcome is logged when
-        # the device closes the stream, so nothing is blocked waiting here.
+        pending = header["pending_bytes"]
         _LOGGER.debug(
-            "%s: history sync requested, cmd 212 replied %s",
+            "%s: history sync - ok=%s, %s byte(s) buffered (~%s record(s))",
             self.address,
-            frame.payload.hex() or "<empty>",
+            header["ok"],
+            pending,
+            pending // p.WORK_RECORD_SIZE,
         )
+        if not header["ok"] or pending <= 0:
+            return
+
+        # cmd 212 only reports what is waiting; cmd 80 is what makes the
+        # fountain actually send it. Chunks then arrive asynchronously, so
+        # nothing is blocked waiting here.
+        try:
+            await self._request(
+                p.CMD_STREAM_SETTING, p.stream_setting_payload(p.STREAM_WINDOW, 1)
+            )
+        except (TimeoutError, PetkitConnectionError, p.ProtocolError) as err:
+            _LOGGER.debug("%s: could not start history stream: %s", self.address, err)
 
     async def _claim(self) -> None:
         assert self.device_id is not None and self.secret is not None

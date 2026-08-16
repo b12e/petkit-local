@@ -362,3 +362,46 @@ async def test_persistent_failure_raises(monkeypatch, fountain):
     client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
     with pytest.raises(PetkitConnectionError):
         await client.async_poll(BLE_DEVICE)
+
+
+async def test_stream_is_started_with_cmd_80(fountain, patched_connection):
+    """cmd 212 only reports what is waiting; cmd 80 makes it flow.
+
+    Regression test: without this the fountain answers cmd 212 and then stays
+    silent, so no history ever arrives.
+    """
+    fountain.history = [(1000, 25), (2000, 40)]
+
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    await client.async_poll(BLE_DEVICE)
+
+    cmds = _cmds(fountain)
+    assert p.CMD_HISTORY in cmds
+    assert p.CMD_STREAM_SETTING in cmds
+    assert cmds.index(p.CMD_HISTORY) < cmds.index(p.CMD_STREAM_SETTING)
+    # Window size then package length, both big-endian uint32.
+    assert fountain.stream_setting == (32).to_bytes(4, "big") + (1).to_bytes(4, "big")
+
+
+async def test_empty_buffer_skips_the_stream(fountain, patched_connection):
+    """A fountain with nothing buffered should not be asked to send."""
+    fountain.history = []
+    received: list = []
+
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    client.register_history_callback(received.extend)
+    state = await client.async_poll(BLE_DEVICE)
+
+    assert p.CMD_HISTORY in _cmds(fountain)
+    assert p.CMD_STREAM_SETTING not in _cmds(fountain)
+    assert received == []
+    assert state["battery_percent"] == 88
+
+
+async def test_history_header_parsing_matches_the_device(fountain, patched_connection):
+    """The observed 0100000000 reply means ok with nothing pending."""
+    header = p.parse_history_header(bytes.fromhex("0100000000"))
+    assert header == {"ok": True, "pending_bytes": 0}
+
+    header = p.parse_history_header(bytes.fromhex("010000004E"))
+    assert header["pending_bytes"] == 78  # 13 records

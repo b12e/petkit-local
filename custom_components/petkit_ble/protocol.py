@@ -444,6 +444,29 @@ class WorkRecord:
     raw_time: int
 
 
+def parse_history_header(payload: bytes) -> dict[str, Any]:
+    """cmd 212 reply: a status byte then the pending byte count.
+
+    ``CTW3BleClient`` reads bytes 1-4 into ``maxDataLength``, so a zero here
+    means the fountain has nothing buffered and no stream will follow.
+    """
+    if len(payload) < 5:
+        raise ProtocolError(f"history header too short: {len(payload)}")
+    return {"ok": payload[0] == 1, "pending_bytes": int.from_bytes(payload[1:5], "big")}
+
+
+def stream_setting_payload(
+    package_count: int = STREAM_WINDOW, package_length: int = 1
+) -> bytes:
+    """cmd 80 - the command that actually starts the transfer.
+
+    The app sends this immediately after cmd 212 reports pending data, with the
+    window size and its ``maxPackageLength`` (still 1 at that point). Without
+    it the fountain answers cmd 212 and then stays silent.
+    """
+    return package_count.to_bytes(4, "big") + package_length.to_bytes(4, "big")
+
+
 def parse_work_records(payload: bytes) -> list[WorkRecord]:
     """Split a reassembled history stream into visit records."""
     records: list[WorkRecord] = []

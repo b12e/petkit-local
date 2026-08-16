@@ -44,6 +44,7 @@ class FakeFountain:
         # Visits the fountain has buffered, as (raw_time, stay_seconds).
         self.history: list[tuple[int, int]] = []
         self.pending_stream: list[bytes] = []
+        self.stream_setting: bytes | None = None
 
     def handle(self, frame: p.Frame) -> bytes | None:
         """Return the response frame for a request, or None for silence."""
@@ -100,6 +101,12 @@ class FakeFountain:
             return self._resp(cmd, b"\x01")
 
         if cmd == p.CMD_HISTORY:
+            pending = len(self.history) * p.WORK_RECORD_SIZE
+            return self._resp(cmd, b"\x01" + pending.to_bytes(4, "big"))
+
+        if cmd == p.CMD_STREAM_SETTING:
+            # Only now does the real firmware start sending chunks.
+            self.stream_setting = payload
             self.pending_stream = self._history_frames()
             return self._resp(cmd, b"\x01")
 
