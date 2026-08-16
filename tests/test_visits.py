@@ -221,3 +221,105 @@ def test_records_from_another_day_are_ignored():
 
     assert tracker.count == 1
     assert tracker.duration == timedelta(seconds=20)
+
+
+# --- lifetime totals ------------------------------------------------------
+
+
+def test_daily_duration_never_goes_backwards():
+    """Regression: the daily total used to dip every time a visit closed.
+
+    The live in-progress figure kept climbing through the grace period, then
+    only the shorter measured length was banked, so the sensor fell back. A
+    total_increasing sensor that decreases reads as a counter reset.
+    """
+    tracker = VisitTracker()
+    seen: list[float] = []
+
+    def sample():
+        seen.append(tracker.duration.total_seconds())
+
+    grace = VISIT_GAP_GRACE.total_seconds()
+    observations = [
+        (True, 0),
+        (True, 10),
+        (True, 20),
+        (False, 25),
+        (False, 20 + grace + 1),
+        (True, 200),
+        (True, 215),
+        (False, 215 + grace + 1),
+    ]
+
+    sample()
+    for detected, offset in observations:
+        tracker.update(detected, at(offset))
+        sample()
+
+    assert seen == sorted(seen), f"daily duration dipped: {seen}"
+
+
+def test_lifetime_totals_survive_midnight():
+    tracker = VisitTracker()
+    tracker.update(True, at(0))
+    tracker.update(True, at(30))
+    tracker.update(False, at(30 + VISIT_GAP_GRACE.total_seconds() + 1))
+
+    assert tracker.count == 1
+    assert tracker.total_count == 1
+    assert tracker.total_duration == timedelta(seconds=30)
+
+    tomorrow = START + timedelta(days=1)
+    tracker.update(False, tomorrow)
+
+    assert tracker.count == 0, "daily figures reset"
+    assert tracker.duration == timedelta()
+    assert tracker.total_count == 1, "lifetime figures do not"
+    assert tracker.total_duration == timedelta(seconds=30)
+
+
+def test_lifetime_totals_accumulate_device_records():
+    tracker = VisitTracker()
+    tracker.ingest([FakeRecord(60, 25, raw=1)], at(100))
+    tracker.ingest([FakeRecord(300, 40, raw=2)], at(400))
+
+    assert tracker.total_count == 2
+    assert tracker.total_duration == timedelta(seconds=65)
+
+
+def test_switching_to_device_records_unwinds_estimates_from_totals():
+    """Estimates must be given back, or today gets counted twice lifetime."""
+    tracker = VisitTracker()
+    tracker.update(True, at(0))
+    tracker.update(True, at(20))
+    tracker.update(False, at(20 + VISIT_GAP_GRACE.total_seconds() + 1))
+    assert tracker.total_count == 1
+    assert tracker.total_duration == timedelta(seconds=20)
+
+    tracker.ingest([FakeRecord(60, 25, raw=1)], at(300))
+
+    assert tracker.total_count == 1, "estimate replaced, not added to"
+    assert tracker.total_duration == timedelta(seconds=25)
+
+
+def test_totals_never_go_negative_when_unwinding():
+    tracker = VisitTracker()
+    tracker.restore_totals(count=0, duration_seconds=0.0)
+    tracker.count = 5
+    tracker.duration = timedelta(seconds=99)
+
+    tracker.ingest([FakeRecord(60, 10, raw=1)], at(300))
+
+    assert tracker.total_count >= 0
+    assert tracker.total_duration >= timedelta()
+
+
+def test_restore_totals():
+    tracker = VisitTracker()
+    tracker.restore_totals(count=42, duration_seconds=1234.5)
+    assert tracker.total_count == 42
+    assert tracker.total_duration == timedelta(seconds=1234.5)
+
+    tracker.ingest([FakeRecord(60, 10, raw=1)], at(300))
+    assert tracker.total_count == 43
+    assert tracker.total_duration == timedelta(seconds=1244.5)

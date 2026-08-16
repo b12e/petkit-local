@@ -173,6 +173,12 @@
       },
       "last_pet_visit": {
         "name": "Last pet visit"
+      },
+      "pet_visits_total": {
+        "name": "Pet visits total"
+      },
+      "pet_drink_duration_total": {
+        "name": "Pet drinking time total"
       }
     },
     "switch": {

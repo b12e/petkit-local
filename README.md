@@ -98,7 +98,8 @@ reset filter.
 
 **Readings** - battery percent and voltage, supply voltage, filter remaining and estimated
 days left, pump runtime today and total, water purified today and total, energy used,
-pump state, signal strength, pet visits today, pet drinking time today, last pet visit.
+pump state, signal strength, pet visits today, pet drinking time today, pet visits total,
+pet drinking time total, last pet visit.
 
 **Problems** - water low, filter due, fault, battery low, pet detected, mains power,
 do-not-disturb active.
@@ -128,6 +129,11 @@ Before any records arrive - or if the history stream turns out not to work on a 
 firmware - visits fall back to being reconstructed from the live `detect_status` flag,
 which is only as good as the sample rate. The moment real records show up the fallback
 stops counting, so the two can never double up.
+
+The daily figures reset at local midnight; the totals do not, and both survive a restart.
+Only completed visits count toward them, so the numbers never go backwards. A visit that is
+under way shows up as the `visit_in_progress` and `current_visit_seconds` attributes on the
+daily drinking time instead.
 
 ## Protocol notes
 

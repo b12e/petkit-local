@@ -172,6 +172,8 @@ async def async_setup_entry(
     entities.append(PetkitBleRssiSensor(coordinator))
     entities.append(PetkitBleVisitCountSensor(coordinator))
     entities.append(PetkitBleVisitDurationSensor(coordinator))
+    entities.append(PetkitBleVisitTotalSensor(coordinator))
+    entities.append(PetkitBleVisitTotalDurationSensor(coordinator))
     entities.append(PetkitBleLastVisitSensor(coordinator))
     async_add_entities(entities)
 
@@ -272,10 +274,84 @@ class PetkitBleVisitDurationSensor(PetkitBleEntity, SensorEntity):
 
     @property
     def native_value(self) -> float:
+        # Only completed visits. Adding the one under way made this fall back
+        # every time a visit closed, because the live figure keeps climbing
+        # through the grace period while only the shorter measured length is
+        # banked. A total that goes down reads as a counter reset and wrecks
+        # the long-term statistics.
+        return round(self.coordinator.visits.duration.total_seconds(), 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
         visits = self.coordinator.visits
-        # Include the visit under way so the figure climbs live.
-        ongoing = visits.current_duration(dt_util.now())
-        return round((visits.duration + ongoing).total_seconds(), 1)
+        return {
+            "visit_in_progress": visits.in_progress,
+            "current_visit_seconds": round(
+                visits.current_duration(dt_util.now()).total_seconds(), 1
+            ),
+        }
+
+    @property
+    def available(self) -> bool:
+        return True
+
+
+class PetkitBleVisitTotalSensor(PetkitBleEntity, RestoreSensor):
+    """Lifetime visit count, carried across midnight and restarts."""
+
+    _attr_translation_key = "pet_visits_total"
+    _attr_icon = "mdi:cat"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "pet_visits_total")
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the running totals; unlike the daily ones they never reset."""
+        await super().async_added_to_hass()
+
+        last = await self.async_get_last_sensor_data()
+        extra = await self.async_get_last_extra_data()
+        stored = extra.as_dict() if extra else {}
+
+        self.coordinator.visits.restore_totals(
+            count=int(last.native_value or 0) if last and last.native_value else 0,
+            duration_seconds=float(stored.get("total_duration", 0.0)),
+        )
+
+    @property
+    def native_value(self) -> int:
+        return self.coordinator.visits.total_count
+
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData:
+        return RestoredExtraData(
+            {"total_duration": self.coordinator.visits.total_duration.total_seconds()}
+        )
+
+    @property
+    def available(self) -> bool:
+        return True
+
+
+class PetkitBleVisitTotalDurationSensor(PetkitBleEntity, SensorEntity):
+    """Lifetime drinking time."""
+
+    _attr_translation_key = "pet_drink_duration_total"
+    _attr_icon = "mdi:timer-outline"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_suggested_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 1
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "pet_drink_duration_total")
+
+    @property
+    def native_value(self) -> float:
+        return round(self.coordinator.visits.total_duration.total_seconds(), 1)
 
     @property
     def available(self) -> bool:

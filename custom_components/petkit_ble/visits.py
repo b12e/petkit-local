@@ -38,6 +38,11 @@ class VisitTracker:
     last_visit: datetime | None = None
     day: date | None = None
 
+    # Lifetime figures. These never reset at midnight, so they survive as a
+    # running total for as long as the integration is installed.
+    total_count: int = 0
+    total_duration: timedelta = timedelta()
+
     # Set once the fountain hands us its own records; the flag-watching
     # fallback stops counting from that point so totals cannot be doubled.
     device_backed: bool = False
@@ -64,11 +69,16 @@ class VisitTracker:
         last_visit: datetime | None,
         day: date | None,
     ) -> None:
-        """Seed from persisted state after a restart."""
+        """Seed today's figures from persisted state after a restart."""
         self.count = count
         self.duration = timedelta(seconds=duration_seconds)
         self.last_visit = last_visit
         self.day = day
+
+    def restore_totals(self, count: int, duration_seconds: float) -> None:
+        """Seed the lifetime figures, which outlive any single day."""
+        self.total_count = count
+        self.total_duration = timedelta(seconds=duration_seconds)
 
     def ingest(self, records, now: datetime) -> bool:
         """Fold in visit records the fountain recorded itself.
@@ -84,8 +94,14 @@ class VisitTracker:
 
         if records and not self.device_backed:
             # Switching sources: drop anything the fallback guessed so the
-            # device's own numbers are not added on top of estimates.
+            # device's own numbers are not added on top of estimates. The
+            # lifetime figures have to give the estimates back too, or they
+            # would keep counting today twice.
             self.device_backed = True
+            self.total_count = max(0, self.total_count - self.count)
+            self.total_duration = max(
+                timedelta(), self.total_duration - self.duration
+            )
             self.count = 0
             self.duration = timedelta()
             changed = True
@@ -98,7 +114,10 @@ class VisitTracker:
                 continue
             self._seen.add(record.raw_time)
             self.count += 1
-            self.duration += timedelta(seconds=record.stay_seconds)
+            self.total_count += 1
+            stay = timedelta(seconds=record.stay_seconds)
+            self.duration += stay
+            self.total_duration += stay
             if self.last_visit is None or local > self.last_visit:
                 self.last_visit = local
             changed = True
@@ -126,6 +145,7 @@ class VisitTracker:
                 and now - self._started >= MIN_VISIT_DURATION
             ):
                 self.count += 1
+                self.total_count += 1
                 self._counted = True
                 self.last_visit = self._started
                 changed = True
@@ -157,6 +177,7 @@ class VisitTracker:
             return False
 
         self.duration += length
+        self.total_duration += length
         self.last_visit = ended
         self._counted = False
         return True
