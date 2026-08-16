@@ -7,7 +7,7 @@ against ``pypetkitapi``'s relay frames.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -299,3 +299,46 @@ def test_parse_service_data_reads_byte_five():
 
 def test_parse_service_data_too_short():
     assert p.parse_service_data({"uuid": bytes(3)}) is None
+
+
+# --- buffered history stream --------------------------------------------
+
+
+def test_parse_work_records():
+    """Each record is a 4-byte timestamp then a 2-byte stay duration."""
+    raw = (1000).to_bytes(4, "big") + (25).to_bytes(2, "big")
+    raw += (2000).to_bytes(4, "big") + (40).to_bytes(2, "big")
+
+    records = p.parse_work_records(raw)
+
+    assert [r.raw_time for r in records] == [1000, 2000]
+    assert [r.stay_seconds for r in records] == [25, 40]
+    assert records[0].timestamp == p.EPOCH_2000 + timedelta(seconds=1000)
+
+
+def test_parse_work_records_skips_empty_slots():
+    raw = bytes(6) + (2000).to_bytes(4, "big") + (40).to_bytes(2, "big")
+    assert [r.raw_time for r in p.parse_work_records(raw)] == [2000]
+
+
+def test_parse_work_records_ignores_trailing_partial():
+    raw = (1000).to_bytes(4, "big") + (25).to_bytes(2, "big") + b"\x01\x02"
+    assert len(p.parse_work_records(raw)) == 1
+
+
+def test_stream_ack_bitmap_sets_bit_31_minus_index():
+    """Matches BaseDataConvertor.checkStreamData."""
+    assert p.stream_ack_payload({0}) == (1 << 31).to_bytes(4, "big")
+    assert p.stream_ack_payload({31}) == (1).to_bytes(4, "big")
+    assert p.stream_ack_payload({0, 1}) == ((1 << 31) | (1 << 30)).to_bytes(4, "big")
+    assert p.stream_ack_payload(set()) == bytes(4)
+
+
+def test_stream_ack_ignores_out_of_window_indices():
+    assert p.stream_ack_payload({99}) == bytes(4)
+
+
+def test_stream_completeness():
+    assert p.stream_is_complete({0, 1, 2}, 3)
+    assert not p.stream_is_complete({0, 2}, 3)
+    assert p.stream_is_complete(set(range(32)), 0)  # unknown total -> full window

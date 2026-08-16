@@ -78,9 +78,11 @@ class PetkitBlePowerSwitch(PetkitBleEntity, SwitchEntity):
         return None if value is None else bool(value)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        self.coordinator.async_assume(power_status=1)
         await self.coordinator.async_run("power", on=True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
+        self.coordinator.async_assume(power_status=0)
         await self.coordinator.async_run("power", on=False)
 
 
@@ -102,9 +104,11 @@ class PetkitBlePauseSwitch(PetkitBleEntity, SwitchEntity):
         return None if value is None else not bool(value)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        self.coordinator.async_assume(suspend_status=0)
         await self.coordinator.async_run("paused", paused=False)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
+        self.coordinator.async_assume(suspend_status=1)
         await self.coordinator.async_run("paused", paused=True)
 
 
@@ -127,6 +131,7 @@ class PetkitBleSettingSwitch(PetkitBleEntity, SwitchEntity):
         await self._async_set(0)
 
     async def _async_set(self, value: int) -> None:
+        self.coordinator.async_assume(**{self.entity_description.key: value})
         await self.coordinator.async_run(
             "settings", changes={self.entity_description.key: value}
         )

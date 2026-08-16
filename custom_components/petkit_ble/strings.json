@@ -38,10 +38,12 @@
       "init": {
         "title": "Fountain options",
         "data": {
-          "scan_interval": "Poll interval (seconds)"
+          "scan_interval": "Poll interval (seconds)",
+          "keep_alive": "Keep the Bluetooth connection open"
         },
         "data_description": {
-          "scan_interval": "How often to connect and read state. Longer intervals save battery on cordless models."
+          "scan_interval": "How often to read state. With the connection held open the fountain also pushes changes as they happen, so this is a fallback rather than the main path.",
+          "keep_alive": "Auto follows the fountain's own power source: it stays connected on mains, so commands are instant and pet visits are detected reliably, and disconnects between polls when running on battery."
         }
       }
     }
@@ -162,6 +164,15 @@
       },
       "rssi": {
         "name": "Signal strength"
+      },
+      "pet_visits_today": {
+        "name": "Pet visits today"
+      },
+      "pet_drink_duration_today": {
+        "name": "Pet drinking time today"
+      },
+      "last_pet_visit": {
+        "name": "Last pet visit"
       }
     },
     "switch": {
@@ -185,6 +196,15 @@
       },
       "battery_proximity": {
         "name": "Battery mode proximity"
+      }
+    }
+  },
+  "selector": {
+    "keep_alive": {
+      "options": {
+        "auto": "Auto (follow mains power)",
+        "always": "Always",
+        "never": "Never"
       }
     }
   }

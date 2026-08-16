@@ -47,7 +47,9 @@ def test_service_data_wins_over_name():
 
 def test_falls_back_to_exact_local_name():
     """Proxies sometimes strip service data; the name still identifies it."""
-    assert _identify(FakeServiceInfo(name="Petkit_CTW3_100"))["model"] == "Eversweet Max 2"
+    assert (
+        _identify(FakeServiceInfo(name="Petkit_CTW3_100"))["model"] == "Eversweet Max 2"
+    )
 
 
 def test_unknown_ctw3_revision_assumed_compatible():
@@ -62,7 +64,10 @@ def test_ignores_unrelated_devices():
 
 def test_unknown_service_data_id_falls_through():
     """An unrecognised model id must not be reported as supported."""
-    assert _identify(FakeServiceInfo(service_data={"x": bytes([0, 0, 0, 0, 0, 99])})) is None
+    assert (
+        _identify(FakeServiceInfo(service_data={"x": bytes([0, 0, 0, 0, 0, 99])}))
+        is None
+    )
 
 
 # --- secret parsing -----------------------------------------------------

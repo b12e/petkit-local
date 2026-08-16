@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .const import (
@@ -44,7 +44,10 @@ TYPE_NO_RESPONSE = 3
 
 # --- Commands -----------------------------------------------------------
 CMD_BATTERY = 66
+CMD_STREAM_ACK = 67  # device asks which chunks arrived; we reply with a bitmap
+CMD_STREAM_END = 69  # device signals the transfer is finished
 CMD_INIT_DEVICE = 73  # writes device id + secret ("claims" the device)
+CMD_STREAM_SETTING = 80
 CMD_SET_TIME = 84
 CMD_SECURITY_CHECK = 86
 CMD_DEVICE_INFO = 200  # hardware + firmware
@@ -65,6 +68,15 @@ CMD_PUSH_STATUS = 230  # device-initiated, expects an ack
 # cmd 220 selectors
 SELECTOR_POWER_MODE = 1
 SELECTOR_RUN_PAUSE = 2
+
+# Bulk history arrives as stream frames carrying one of these commands.
+STREAM_DATA_CMDS = (68, 82)
+
+# The device acknowledges in windows of 32 chunks.
+STREAM_WINDOW = 32
+
+# One buffered visit: 4-byte timestamp then 2-byte stay duration.
+WORK_RECORD_SIZE = 6
 
 
 class ProtocolError(Exception):
@@ -416,6 +428,63 @@ def parse_push_status(payload: bytes) -> dict[str, Any]:
     if len(payload) >= 40:
         result["child_lock"] = payload[39]
     return result
+
+
+@dataclass(slots=True, frozen=True)
+class WorkRecord:
+    """One visit the fountain recorded and buffered for us.
+
+    ``CTW3WorkData`` in the app: a 4-byte ``workTime`` and a 2-byte
+    ``stayTime``. The fountain logs these itself, so they do not depend on how
+    often we happen to be connected.
+    """
+
+    timestamp: datetime
+    stay_seconds: int
+    raw_time: int
+
+
+def parse_work_records(payload: bytes) -> list[WorkRecord]:
+    """Split a reassembled history stream into visit records."""
+    records: list[WorkRecord] = []
+    for offset in range(0, len(payload) - WORK_RECORD_SIZE + 1, WORK_RECORD_SIZE):
+        chunk = payload[offset : offset + WORK_RECORD_SIZE]
+        raw_time = int.from_bytes(chunk[0:4], "big")
+        stay = int.from_bytes(chunk[4:6], "big")
+        if raw_time == 0:
+            continue
+        records.append(
+            WorkRecord(
+                timestamp=device_time_to_datetime(raw_time),
+                stay_seconds=stay,
+                raw_time=raw_time,
+            )
+        )
+    return records
+
+
+def device_time_to_datetime(raw: int) -> datetime:
+    """Convert the firmware's seconds-since-2000 counter to a datetime."""
+    return EPOCH_2000 + timedelta(seconds=raw)
+
+
+def stream_ack_payload(received: set[int], window: int = STREAM_WINDOW) -> bytes:
+    """Build the cmd 67 bitmap telling the device which chunks arrived.
+
+    Bit ``31 - index`` is set for each chunk we hold, matching
+    ``BaseDataConvertor.checkStreamData``.
+    """
+    mask = 0
+    for index in received:
+        if 0 <= index < window:
+            mask |= 1 << (31 - index)
+    return mask.to_bytes(4, "big")
+
+
+def stream_is_complete(received: set[int], total: int) -> bool:
+    """Whether every chunk the device announced has arrived."""
+    expected = min(total or STREAM_WINDOW, STREAM_WINDOW)
+    return all(index in received for index in range(expected))
 
 
 def parse_schedule(payload: bytes) -> dict[str, Any]:

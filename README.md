@@ -98,7 +98,7 @@ reset filter.
 
 **Readings** - battery percent and voltage, supply voltage, filter remaining and estimated
 days left, pump runtime today and total, water purified today and total, energy used,
-pump state, signal strength.
+pump state, signal strength, pet visits today, pet drinking time today, last pet visit.
 
 **Problems** - water low, filter due, fault, battery low, pet detected, mains power,
 do-not-disturb active.
@@ -106,12 +106,28 @@ do-not-disturb active.
 Water and energy figures are computed locally using the same coefficients the PetKit app
 applies, so they should track what the app shows rather than being an independent guess.
 
-## Battery life
+## Connection handling
 
-The cordless model runs on battery, and every poll is a full connect, handshake, read,
-disconnect. The default 120-second interval is a compromise; raise it in the integration's
-options if you care more about runtime than freshness. The fountain also pushes state
-changes on its own (command 230), which arrive without a poll while connected.
+The link is held open by default, which is what makes commands respond immediately rather
+than paying for a connect plus handshake every time. It also keeps the fountain's own push
+channel (command 230) live, so changes made at the device appear without waiting for a poll.
+
+Holding a link costs nothing on mains but does cost runtime on battery, so the default
+**Auto** setting follows the fountain's own reported power source: connected while it is
+plugged in, disconnecting between polls once it falls back to battery. You can force this
+either way in the integration's options.
+
+## Pet visits
+
+The fountain records every visit itself as a timestamp plus a stay duration, and buffers
+them until something drains the buffer with command 212. That is how the PetKit app builds
+accurate drink history without staying connected, and this integration does the same on
+every poll. Those records are authoritative and do not depend on how often we sampled.
+
+Before any records arrive - or if the history stream turns out not to work on a given
+firmware - visits fall back to being reconstructed from the live `detect_status` flag,
+which is only as good as the sample rate. The moment real records show up the fallback
+stops counting, so the two can never double up.
 
 ## Protocol notes
 
@@ -131,6 +147,10 @@ Two details cost me time, so they are worth stating plainly:
   is the **write** handle and `DATA_UUID` (`aaa1`) is the **notify** handle.
 - In a command 230 push the settings block starts at byte **30**, not 26 - the app's parser
   skips bytes 26-29 - and the push omits the two proximity bytes entirely.
+- Buffered history is a device-driven transfer: it sends chunks as stream frames, asks which
+  arrived with command 67 (the reply is a bitmap where bit `31 - index` means received, and
+  omitting a bit requests a resend), then ends with command 69. Each record is a 4-byte
+  timestamp and a 2-byte stay duration.
 
 ## Testing
 

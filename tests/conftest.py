@@ -41,6 +41,9 @@ class FakeFountain:
 
         self.received: list[p.Frame] = []
         self.clock_set = False
+        # Visits the fountain has buffered, as (raw_time, stay_seconds).
+        self.history: list[tuple[int, int]] = []
+        self.pending_stream: list[bytes] = []
 
     def handle(self, frame: p.Frame) -> bytes | None:
         """Return the response frame for a request, or None for silence."""
@@ -96,11 +99,51 @@ class FakeFountain:
             self.settings = bytearray(payload)
             return self._resp(cmd, b"\x01")
 
+        if cmd == p.CMD_HISTORY:
+            self.pending_stream = self._history_frames()
+            return self._resp(cmd, b"\x01")
+
+        if cmd == p.CMD_STREAM_ACK and frame.type == p.TYPE_RESPONSE:
+            return None  # our bitmap; nothing more to send
+
+        if cmd == p.CMD_STREAM_END and frame.type == p.TYPE_RESPONSE:
+            return None
+
         if cmd == p.CMD_RESET_FILTER:
             self.filter_percent = 100
             return self._resp(cmd, b"\x01")
 
         return self._resp(cmd, b"\x01")
+
+    def _history_frames(self) -> list[bytes]:
+        """Chunk the buffered records into stream frames, two records each."""
+        blob = b"".join(
+            raw.to_bytes(4, "big") + stay.to_bytes(2, "big")
+            for raw, stay in self.history
+        )
+        per_chunk = 12  # two records
+        chunks = [blob[i : i + per_chunk] for i in range(0, len(blob), per_chunk)]
+        total = len(chunks)
+        frames = []
+        for index, chunk in enumerate(chunks):
+            frames.append(
+                bytes(
+                    (
+                        *p.STREAM_HEADER,
+                        68,
+                        p.TYPE_NO_RESPONSE,
+                        index,
+                        total,
+                        len(chunk) & 0xFF,
+                        (len(chunk) >> 8) & 0xFF,
+                        *chunk,
+                    )
+                )
+            )
+        # Then the checkpoint and the end marker, both device-initiated.
+        frames.append(p.build_frame(p.CMD_STREAM_ACK, b"", seq=7))
+        frames.append(p.build_frame(p.CMD_STREAM_END, b"", seq=8))
+        return frames
 
     def push_status(self) -> bytes:
         """Build an unsolicited cmd 230 frame (settings live at offset 30)."""
@@ -164,6 +207,9 @@ class FakeBleakClient:
             reply = self.fountain.handle(frame)
             if reply is not None:
                 self._emit(reply)
+            for queued in self.fountain.pending_stream:
+                self._emit(queued)
+            self.fountain.pending_stream = []
 
     def _emit(self, payload: bytes) -> None:
         """Deliver a frame in MTU-sized chunks, like a real notification."""

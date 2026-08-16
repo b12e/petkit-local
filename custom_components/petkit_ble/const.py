@@ -31,10 +31,24 @@ CONF_ALIAS: Final = "alias"
 DEFAULT_SCAN_INTERVAL: Final = 120
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 
-# The fountain is battery powered; hold the link only as long as needed.
 CONNECT_TIMEOUT: Final = 30.0
 COMMAND_TIMEOUT: Final = 8.0
-IDLE_DISCONNECT_DELAY: Final = 10.0
+RECONNECT_DELAY: Final = 1.0
+
+# Only used when keep-alive is turned off, for genuinely battery-only setups.
+IDLE_DISCONNECT_DELAY: Final = 30.0
+
+CONF_KEEP_ALIVE: Final = "keep_alive"
+
+# Whether to hold the BLE link open between operations. Holding it makes
+# commands respond immediately, but costs runtime on battery. "auto"
+# follows the fountain's own reported power source (electric_status), so a
+# mains-powered unit stays connected and a unit running on battery does not.
+KEEP_ALIVE_AUTO: Final = "auto"
+KEEP_ALIVE_ALWAYS: Final = "always"
+KEEP_ALIVE_NEVER: Final = "never"
+KEEP_ALIVE_OPTIONS: Final = (KEEP_ALIVE_AUTO, KEEP_ALIVE_ALWAYS, KEEP_ALIVE_NEVER)
+DEFAULT_KEEP_ALIVE: Final = KEEP_ALIVE_AUTO
 
 # --- Device identification ---------------------------------------------
 # Byte 5 of the advertised service data identifies the model. Table sourced

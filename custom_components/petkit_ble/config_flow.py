@@ -21,17 +21,23 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from .const import (
     CONF_ADDRESS,
     CONF_ALIAS,
+    CONF_KEEP_ALIVE,
     CONF_MODEL,
     CONF_SCAN_INTERVAL,
     CONF_SECRET,
+    DEFAULT_KEEP_ALIVE,
     DEFAULT_SCAN_INTERVAL,
     DEVICE_MODELS,
     DOMAIN,
+    KEEP_ALIVE_OPTIONS,
     NAME_PREFIXES,
     SECRET_LENGTH,
     SUPPORTED_ALIASES,
@@ -209,20 +215,29 @@ class PetkitBleOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
+        options = self.config_entry.options
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Optional(
                         CONF_SCAN_INTERVAL,
-                        default=self.config_entry.options.get(
-                            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-                        ),
+                        default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
                     ): NumberSelector(
                         NumberSelectorConfig(
                             min=30, max=3600, step=30, mode=NumberSelectorMode.BOX
                         )
-                    )
+                    ),
+                    vol.Optional(
+                        CONF_KEEP_ALIVE,
+                        default=options.get(CONF_KEEP_ALIVE, DEFAULT_KEEP_ALIVE),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=list(KEEP_ALIVE_OPTIONS),
+                            translation_key=CONF_KEEP_ALIVE,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
                 }
             ),
         )

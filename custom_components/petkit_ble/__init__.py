@@ -12,8 +12,10 @@ from .const import (
     CONF_ADDRESS,
     CONF_ALIAS,
     CONF_DEVICE_ID,
+    CONF_KEEP_ALIVE,
     CONF_SCAN_INTERVAL,
     CONF_SECRET,
+    DEFAULT_KEEP_ALIVE,
     DEFAULT_SCAN_INTERVAL,
 )
 from .coordinator import PetkitBleCoordinator
@@ -42,6 +44,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: PetkitBleConfigEntry) ->
         alias=entry.data.get(CONF_ALIAS, "CTW3"),
         secret=bytes.fromhex(secret_hex) if secret_hex else None,
         device_id=entry.data.get(CONF_DEVICE_ID),
+        keep_alive=entry.options.get(CONF_KEEP_ALIVE, DEFAULT_KEEP_ALIVE),
     )
 
     coordinator = PetkitBleCoordinator(
@@ -73,7 +76,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: PetkitBleConfigEntry) ->
 
 async def async_unload_entry(hass: HomeAssistant, entry: PetkitBleConfigEntry) -> bool:
     """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        # Release the BLE slot; a held-open link would block the next setup.
+        await entry.runtime_data.fountain.async_disconnect()
+    return unloaded
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: PetkitBleConfigEntry) -> None:

@@ -106,6 +106,6 @@ class PetkitBleNumber(PetkitBleEntity, NumberEntity):
         return None if value is None else float(value)
 
     async def async_set_native_value(self, value: float) -> None:
-        await self.coordinator.async_run(
-            "settings", changes={self.entity_description.setting_key: int(value)}
-        )
+        key = self.entity_description.setting_key
+        self.coordinator.async_assume(**{key: int(value)})
+        await self.coordinator.async_run("settings", changes={key: int(value)})

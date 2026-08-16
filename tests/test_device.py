@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
+from bleak.exc import BleakError
 
 from custom_components.petkit_ble import protocol as p
 from custom_components.petkit_ble.const import MODE_SMART
-from custom_components.petkit_ble.device import PetkitAuthError, PetkitFountain
+from custom_components.petkit_ble.device import (
+    PetkitAuthError,
+    PetkitConnectionError,
+    PetkitFountain,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -208,3 +215,150 @@ async def test_fragmented_responses(monkeypatch, fountain):
 
     assert state["battery_percent"] == 88
     assert client.serial == "CTW3TEST000001"
+
+
+# --- buffered history sync ----------------------------------------------
+
+
+async def test_history_records_reach_the_callback(fountain, patched_connection):
+    """A poll drains the visits the fountain buffered while we were away."""
+    fountain.history = [(1000, 25), (2000, 40), (3000, 15)]
+    received: list = []
+
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    client.register_history_callback(received.extend)
+    await client.async_poll(BLE_DEVICE)
+
+    assert p.CMD_HISTORY in _cmds(fountain)
+    assert [r.raw_time for r in received] == [1000, 2000, 3000]
+    assert [r.stay_seconds for r in received] == [25, 40, 15]
+
+
+async def test_history_is_acknowledged(fountain, patched_connection):
+    """The device's checkpoint and end markers both get a response."""
+    fountain.history = [(1000, 25), (2000, 40)]
+
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    await client.async_poll(BLE_DEVICE)
+    await asyncio.sleep(0)  # let the queued ack writes run
+
+    replies = [
+        f
+        for f in fountain.received
+        if f.cmd in (p.CMD_STREAM_ACK, p.CMD_STREAM_END) and f.type == p.TYPE_RESPONSE
+    ]
+    assert {f.cmd for f in replies} == {p.CMD_STREAM_ACK, p.CMD_STREAM_END}
+
+    ack = next(f for f in replies if f.cmd == p.CMD_STREAM_ACK)
+    # One chunk of two records -> only index 0, so the top bit is set.
+    assert ack.payload == (1 << 31).to_bytes(4, "big")
+
+
+async def test_history_spanning_multiple_chunks(fountain, patched_connection):
+    """Records split across stream frames reassemble in order."""
+    fountain.history = [(1000 + i * 100, 10 + i) for i in range(9)]
+    received: list = []
+
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    client.register_history_callback(received.extend)
+    await client.async_poll(BLE_DEVICE)
+
+    assert len(received) == 9
+    assert [r.raw_time for r in received] == [1000 + i * 100 for i in range(9)]
+
+
+async def test_empty_history_is_harmless(fountain, patched_connection):
+    fountain.history = []
+    received: list = []
+
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    client.register_history_callback(received.extend)
+    state = await client.async_poll(BLE_DEVICE)
+
+    assert received == []
+    assert state["battery_percent"] == 88  # poll still succeeded
+
+
+# --- connection lifecycle ------------------------------------------------
+
+
+async def test_link_is_held_open_between_polls(fountain, patched_connection):
+    """Mains-powered fountains keep the link, so commands stay instant."""
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    await client.async_poll(BLE_DEVICE)
+    assert client.hold_link  # fake reports electric_status 1
+    assert patched_connection.is_connected
+
+    fountain.received.clear()
+    await client.async_poll(BLE_DEVICE)
+
+    # No second handshake: the session survived.
+    assert p.CMD_IDENTITY not in _cmds(fountain)
+    assert p.CMD_SECURITY_CHECK not in _cmds(fountain)
+
+
+async def test_battery_power_releases_the_link(fountain, patched_connection):
+    """On battery the fountain should not be kept awake by an open link."""
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    await client.async_poll(BLE_DEVICE)
+
+    client.state["electric_status"] = 0
+    assert not client.hold_link
+
+
+async def test_keep_alive_override(fountain, patched_connection):
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3", keep_alive="never")
+    await client.async_poll(BLE_DEVICE)
+    assert not client.hold_link
+
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3", keep_alive="always")
+    await client.async_poll(BLE_DEVICE)
+    client.state["electric_status"] = 0
+    assert client.hold_link
+
+
+async def test_dropped_link_is_rebuilt(monkeypatch, fountain):
+    """A mid-command disconnect reconnects instead of surfacing an error."""
+    from custom_components.petkit_ble import device as device_module
+    from tests.conftest import FakeBleakClient
+
+    clients: list[FakeBleakClient] = []
+    fail_once = {"done": False}
+
+    async def _establish(_cls, _dev, _name, _cb, **_kw):
+        client = FakeBleakClient(fountain)
+        original = client.write_gatt_char
+
+        async def _write(uuid, data, response=False):
+            if not fail_once["done"]:
+                fail_once["done"] = True
+                client.is_connected = False
+                raise BleakError("peripheral went away")
+            await original(uuid, data, response=response)
+
+        client.write_gatt_char = _write
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(device_module, "establish_connection", _establish)
+    monkeypatch.setattr(device_module, "RECONNECT_DELAY", 0)
+
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    state = await client.async_poll(BLE_DEVICE)
+
+    assert len(clients) == 2, "should have reconnected once"
+    assert state["battery_percent"] == 88
+
+
+async def test_persistent_failure_raises(monkeypatch, fountain):
+    from custom_components.petkit_ble import device as device_module
+
+    async def _establish(*_args, **_kwargs):
+        raise BleakError("no route to device")
+
+    monkeypatch.setattr(device_module, "establish_connection", _establish)
+    monkeypatch.setattr(device_module, "RECONNECT_DELAY", 0)
+
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    with pytest.raises(PetkitConnectionError):
+        await client.async_poll(BLE_DEVICE)

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
@@ -22,6 +23,8 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoredExtraData
+from homeassistant.util import dt as dt_util
 
 from . import PetkitBleConfigEntry
 from .const import BRIGHTNESS_OPTIONS, MODE_OPTIONS
@@ -165,6 +168,9 @@ async def async_setup_entry(
         PetkitBleSensor(coordinator, description) for description in SENSORS
     ]
     entities.append(PetkitBleRssiSensor(coordinator))
+    entities.append(PetkitBleVisitCountSensor(coordinator))
+    entities.append(PetkitBleVisitDurationSensor(coordinator))
+    entities.append(PetkitBleLastVisitSensor(coordinator))
     async_add_entities(entities)
 
 
@@ -183,6 +189,114 @@ class PetkitBleSensor(PetkitBleEntity, SensorEntity):
         if self.entity_description.value_fn is not None:
             return self.entity_description.value_fn(data)
         return data.get(self.entity_description.key)
+
+
+class PetkitBleVisitCountSensor(PetkitBleEntity, RestoreSensor):
+    """How many times a pet has used the fountain today.
+
+    Reconstructed from the detection flag - see visits.py for why this is an
+    approximation rather than a figure the fountain reports.
+    """
+
+    _attr_translation_key = "pet_visits_today"
+    _attr_icon = "mdi:cat"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "pet_visits_today")
+
+    async def async_added_to_hass(self) -> None:
+        """Restore today's totals so a restart does not zero the counters."""
+        await super().async_added_to_hass()
+
+        last = await self.async_get_last_sensor_data()
+        attrs = (await self.async_get_last_extra_data()) if last else None
+        stored = attrs.as_dict() if attrs else {}
+
+        day = stored.get("day")
+        parsed_day = dt_util.parse_date(day) if day else None
+        if parsed_day != dt_util.now().date():
+            # Yesterday's totals; let them stay reset.
+            return
+
+        last_visit = stored.get("last_visit")
+        self.coordinator.visits.restore(
+            count=int(last.native_value or 0) if last and last.native_value else 0,
+            duration_seconds=float(stored.get("duration", 0.0)),
+            last_visit=dt_util.parse_datetime(last_visit) if last_visit else None,
+            day=parsed_day,
+        )
+
+    @property
+    def native_value(self) -> int:
+        return self.coordinator.visits.count
+
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData:
+        visits = self.coordinator.visits
+        return RestoredExtraData(
+            {
+                "duration": visits.duration.total_seconds(),
+                "last_visit": visits.last_visit.isoformat()
+                if visits.last_visit
+                else None,
+                "day": visits.day.isoformat() if visits.day else None,
+            }
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"visit_in_progress": self.coordinator.visits.in_progress}
+
+    @property
+    def available(self) -> bool:
+        # Derived locally, so it stays meaningful even if a poll fails.
+        return True
+
+
+class PetkitBleVisitDurationSensor(PetkitBleEntity, SensorEntity):
+    """Total time a pet has spent at the fountain today."""
+
+    _attr_translation_key = "pet_drink_duration_today"
+    _attr_icon = "mdi:timer-outline"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_suggested_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "pet_drink_duration_today")
+
+    @property
+    def native_value(self) -> float:
+        visits = self.coordinator.visits
+        # Include the visit under way so the figure climbs live.
+        ongoing = visits.current_duration(dt_util.now())
+        return round((visits.duration + ongoing).total_seconds(), 1)
+
+    @property
+    def available(self) -> bool:
+        return True
+
+
+class PetkitBleLastVisitSensor(PetkitBleEntity, SensorEntity):
+    """When a pet last used the fountain."""
+
+    _attr_translation_key = "last_pet_visit"
+    _attr_icon = "mdi:clock-outline"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "last_pet_visit")
+
+    @property
+    def native_value(self):
+        return self.coordinator.visits.last_visit
+
+    @property
+    def available(self) -> bool:
+        return True
 
 
 class PetkitBleRssiSensor(PetkitBleEntity, SensorEntity):

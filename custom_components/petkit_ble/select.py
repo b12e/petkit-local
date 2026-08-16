@@ -41,6 +41,7 @@ class PetkitBleModeSelect(PetkitBleEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         for value, name in MODE_OPTIONS.items():
             if name == option:
+                self.coordinator.async_assume(mode=value)
                 await self.coordinator.async_run("mode", mode=value)
                 return
         raise ValueError(f"unknown mode {option!r}")
@@ -64,6 +65,7 @@ class PetkitBleBrightnessSelect(PetkitBleEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         for value, name in BRIGHTNESS_OPTIONS.items():
             if name == option:
+                self.coordinator.async_assume(light_brightness=value)
                 await self.coordinator.async_run(
                     "settings", changes={"light_brightness": value}
                 )
