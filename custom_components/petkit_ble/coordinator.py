@@ -44,8 +44,40 @@ class PetkitBleCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.rssi: int | None = None
         self.visits = VisitTracker()
         self._failures = 0
+        # Let the client re-resolve the device itself, so a retry can go out
+        # through a different Bluetooth proxy rather than the one that just
+        # failed.
+        fountain.set_device_provider(self._lookup_device)
         fountain.register_push_callback(self._on_push)
         fountain.register_history_callback(self._on_history)
+
+    @callback
+    def _lookup_device(self) -> BLEDevice | None:
+        """Resolve the fountain through whichever adapter or proxy can see it."""
+        return bluetooth.async_ble_device_from_address(
+            self.hass, self.fountain.address, connectable=True
+        )
+
+    @callback
+    def _log_sources(self) -> None:
+        """Record which proxies can currently reach the fountain."""
+        try:
+            devices = bluetooth.async_scanner_devices_by_address(
+                self.hass, self.fountain.address, connectable=True
+            )
+        except Exception:  # noqa: BLE001 - diagnostics must not break a poll
+            return
+        if not devices:
+            _LOGGER.debug("%s: no proxy currently sees it", self.fountain.address)
+            return
+        _LOGGER.debug(
+            "%s: visible via %s",
+            self.fountain.address,
+            ", ".join(
+                f"{d.scanner.name or d.scanner.source} (rssi {d.advertisement.rssi})"
+                for d in devices
+            ),
+        )
 
     @callback
     def _on_push(self, state: dict[str, Any]) -> None:
@@ -76,13 +108,12 @@ class PetkitBleCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         reused and no lookup is needed. Only when there is nothing to reuse
         does being absent from the registry actually block us.
         """
-        device = bluetooth.async_ble_device_from_address(
-            self.hass, self.fountain.address, connectable=True
-        )
+        device = self._lookup_device()
         if device is not None:
             return device
         if self.fountain.is_connected:
             return None
+        self._log_sources()
         raise PetkitConnectionError(
             f"{self.fountain.address} is not in range of any Bluetooth adapter or proxy"
         )

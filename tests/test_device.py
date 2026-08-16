@@ -445,3 +445,105 @@ async def test_is_connected_tracks_teardown(fountain, patched_connection):
 
     await client.async_disconnect()
     assert not client.is_connected
+
+
+# --- multiple Bluetooth proxies ------------------------------------------
+
+
+async def test_retry_resolves_a_fresh_device(monkeypatch, fountain):
+    """A retry must be able to go out through a different proxy.
+
+    A BLEDevice is bound to the proxy that last saw the fountain, so reusing
+    one pins every attempt to a proxy that may be down.
+    """
+    from custom_components.petkit_ble import device as device_module
+    from tests.conftest import FakeBleakClient
+
+    dead_proxy = object()
+    live_proxy = object()
+    provider_calls = {"n": 0}
+    used: list = []
+
+    def _provider():
+        provider_calls["n"] += 1
+        # First lookup hands out the dead proxy, later ones a healthy proxy.
+        return dead_proxy if provider_calls["n"] == 1 else live_proxy
+
+    async def _establish(_cls, dev, _name, _cb, **_kw):
+        used.append(dev)
+        if dev is dead_proxy:
+            raise BleakError("proxy is down")
+        return FakeBleakClient(fountain)
+
+    monkeypatch.setattr(device_module, "establish_connection", _establish)
+    monkeypatch.setattr(device_module, "RECONNECT_DELAY", 0)
+
+    client = PetkitFountain(
+        "AA:BB:CC:DD:EE:FF", "CTW3", device_provider=_provider
+    )
+    state = await client.async_poll(None)
+
+    assert used == [dead_proxy, live_proxy], "retry should use a fresh device"
+    assert state["battery_percent"] == 88
+
+
+async def test_provider_result_beats_the_passed_device(monkeypatch, fountain):
+    """A freshly resolved device wins over a possibly stale one."""
+    from custom_components.petkit_ble import device as device_module
+    from tests.conftest import FakeBleakClient
+
+    stale = object()
+    fresh = object()
+    used: list = []
+
+    async def _establish(_cls, dev, _name, _cb, **_kw):
+        used.append(dev)
+        return FakeBleakClient(fountain)
+
+    monkeypatch.setattr(device_module, "establish_connection", _establish)
+
+    client = PetkitFountain(
+        "AA:BB:CC:DD:EE:FF", "CTW3", device_provider=lambda: fresh
+    )
+    await client.async_poll(stale)
+
+    assert used == [fresh]
+
+
+async def test_falls_back_when_provider_returns_nothing(monkeypatch, fountain):
+    """If no proxy sees it, the device we were handed is still worth a try."""
+    from custom_components.petkit_ble import device as device_module
+    from tests.conftest import FakeBleakClient
+
+    handed = object()
+    used: list = []
+
+    async def _establish(_cls, dev, _name, _cb, **_kw):
+        used.append(dev)
+        return FakeBleakClient(fountain)
+
+    monkeypatch.setattr(device_module, "establish_connection", _establish)
+
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3", device_provider=lambda: None)
+    await client.async_poll(handed)
+
+    assert used == [handed]
+
+
+async def test_provider_errors_do_not_break_a_poll(monkeypatch, fountain):
+    from custom_components.petkit_ble import device as device_module
+    from tests.conftest import FakeBleakClient
+
+    handed = object()
+
+    async def _establish(_cls, dev, _name, _cb, **_kw):
+        return FakeBleakClient(fountain)
+
+    def _boom():
+        raise RuntimeError("registry exploded")
+
+    monkeypatch.setattr(device_module, "establish_connection", _establish)
+
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3", device_provider=_boom)
+    state = await client.async_poll(handed)
+    assert state["battery_percent"] == 88

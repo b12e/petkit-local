@@ -70,12 +70,18 @@ class PetkitFountain:
         secret: bytes | None = None,
         device_id: int | None = None,
         keep_alive: str = KEEP_ALIVE_AUTO,
+        device_provider: Callable[[], BLEDevice | None] | None = None,
     ) -> None:
         self.address = address
         self.alias = alias
         self.secret = secret
         self.device_id = device_id
         self.keep_alive = keep_alive
+        # Re-resolves the device on every attempt. With several Bluetooth
+        # proxies a BLEDevice is bound to the one that last saw the
+        # fountain, so reusing a stale one keeps retrying through a proxy
+        # that may be down instead of failing over to a healthy one.
+        self._device_provider = device_provider
         self.serial: str | None = None
         self.firmware: str | None = None
         self.hardware: int | None = None
@@ -112,6 +118,24 @@ class PetkitFountain:
     ) -> None:
         """Register a callback for buffered visit records (cmd 212)."""
         self._history_callbacks.append(cb)
+
+    def set_device_provider(
+        self, provider: Callable[[], BLEDevice | None]
+    ) -> None:
+        """Supply a fresh BLEDevice lookup, used for proxy failover."""
+        self._device_provider = provider
+
+    def _resolve_device(self, fallback: BLEDevice | None) -> BLEDevice | None:
+        """Prefer a freshly resolved device over the one we were handed."""
+        if self._device_provider is not None:
+            try:
+                fresh = self._device_provider()
+            except Exception:  # noqa: BLE001 - lookup must never break a poll
+                _LOGGER.debug("%s: device lookup failed", self.address)
+            else:
+                if fresh is not None:
+                    return fresh
+        return fallback
 
     @property
     def is_connected(self) -> bool:
@@ -221,7 +245,7 @@ class PetkitFountain:
 
             for attempt in range(attempts):
                 try:
-                    await self._connect(ble_device)
+                    await self._connect(self._resolve_device(ble_device))
                     await self._ensure_session()
                     result = await action()
                 except (PetkitConnectionError, BleakError, TimeoutError) as err:
@@ -263,6 +287,7 @@ class PetkitFountain:
                 self.address,
                 self._on_disconnect,
                 timeout=CONNECT_TIMEOUT,
+                ble_device_callback=self._device_provider,
             )
             self._write_response = _prefers_write_response(client)
             await client.start_notify(NOTIFY_UUID, self._on_notify)
