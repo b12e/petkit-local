@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.sensor import (
-    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
@@ -23,7 +22,6 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoredExtraData
 from homeassistant.util import dt as dt_util
 
 from . import PetkitBleConfigEntry
@@ -195,11 +193,12 @@ class PetkitBleSensor(PetkitBleEntity, SensorEntity):
         return data.get(self.entity_description.key)
 
 
-class PetkitBleVisitCountSensor(PetkitBleEntity, RestoreSensor):
+class PetkitBleVisitCountSensor(PetkitBleEntity, SensorEntity):
     """How many times a pet has used the fountain today.
 
-    Reconstructed from the detection flag - see visits.py for why this is an
-    approximation rather than a figure the fountain reports.
+    State is persisted by the coordinator, not through this entity: overriding
+    a RestoreSensor's extra data broke async_get_last_sensor_data, so the count
+    silently came back as zero after every restart.
     """
 
     _attr_translation_key = "pet_visits_today"
@@ -209,44 +208,9 @@ class PetkitBleVisitCountSensor(PetkitBleEntity, RestoreSensor):
     def __init__(self, coordinator) -> None:
         super().__init__(coordinator, "pet_visits_today")
 
-    async def async_added_to_hass(self) -> None:
-        """Restore today's totals so a restart does not zero the counters."""
-        await super().async_added_to_hass()
-
-        last = await self.async_get_last_sensor_data()
-        attrs = (await self.async_get_last_extra_data()) if last else None
-        stored = attrs.as_dict() if attrs else {}
-
-        day = stored.get("day")
-        parsed_day = dt_util.parse_date(day) if day else None
-        if parsed_day != dt_util.now().date():
-            # Yesterday's totals; let them stay reset.
-            return
-
-        last_visit = stored.get("last_visit")
-        self.coordinator.visits.restore(
-            count=int(last.native_value or 0) if last and last.native_value else 0,
-            duration_seconds=float(stored.get("duration", 0.0)),
-            last_visit=dt_util.parse_datetime(last_visit) if last_visit else None,
-            day=parsed_day,
-        )
-
     @property
     def native_value(self) -> int:
         return self.coordinator.visits.count
-
-    @property
-    def extra_restore_state_data(self) -> RestoredExtraData:
-        visits = self.coordinator.visits
-        return RestoredExtraData(
-            {
-                "duration": visits.duration.total_seconds(),
-                "last_visit": visits.last_visit.isoformat()
-                if visits.last_visit
-                else None,
-                "day": visits.day.isoformat() if visits.day else None,
-            }
-        )
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -296,7 +260,7 @@ class PetkitBleVisitDurationSensor(PetkitBleEntity, SensorEntity):
         return True
 
 
-class PetkitBleVisitTotalSensor(PetkitBleEntity, RestoreSensor):
+class PetkitBleVisitTotalSensor(PetkitBleEntity, SensorEntity):
     """Lifetime visit count, carried across midnight and restarts."""
 
     _attr_translation_key = "pet_visits_total"
@@ -306,28 +270,9 @@ class PetkitBleVisitTotalSensor(PetkitBleEntity, RestoreSensor):
     def __init__(self, coordinator) -> None:
         super().__init__(coordinator, "pet_visits_total")
 
-    async def async_added_to_hass(self) -> None:
-        """Restore the running totals; unlike the daily ones they never reset."""
-        await super().async_added_to_hass()
-
-        last = await self.async_get_last_sensor_data()
-        extra = await self.async_get_last_extra_data()
-        stored = extra.as_dict() if extra else {}
-
-        self.coordinator.visits.restore_totals(
-            count=int(last.native_value or 0) if last and last.native_value else 0,
-            duration_seconds=float(stored.get("total_duration", 0.0)),
-        )
-
     @property
     def native_value(self) -> int:
         return self.coordinator.visits.total_count
-
-    @property
-    def extra_restore_state_data(self) -> RestoredExtraData:
-        return RestoredExtraData(
-            {"total_duration": self.coordinator.visits.total_duration.total_seconds()}
-        )
 
     @property
     def available(self) -> bool:

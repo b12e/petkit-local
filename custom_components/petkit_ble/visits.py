@@ -62,23 +62,50 @@ class VisitTracker:
             return timedelta()
         return max(now - self._started, timedelta())
 
-    def restore(
-        self,
-        count: int,
-        duration_seconds: float,
-        last_visit: datetime | None,
-        day: date | None,
-    ) -> None:
-        """Seed today's figures from persisted state after a restart."""
-        self.count = count
-        self.duration = timedelta(seconds=duration_seconds)
-        self.last_visit = last_visit
-        self.day = day
+    def to_dict(self) -> dict:
+        """Serialise for persistence.
 
-    def restore_totals(self, count: int, duration_seconds: float) -> None:
-        """Seed the lifetime figures, which outlive any single day."""
-        self.total_count = count
-        self.total_duration = timedelta(seconds=duration_seconds)
+        Everything lives here rather than in an entity's restore payload: five
+        sensors read this tracker, so it has one owner and survives entities
+        being renamed or disabled.
+        """
+        return {
+            "count": self.count,
+            "duration": self.duration.total_seconds(),
+            "last_visit": self.last_visit.isoformat() if self.last_visit else None,
+            "day": self.day.isoformat() if self.day else None,
+            "total_count": self.total_count,
+            "total_duration": self.total_duration.total_seconds(),
+            "device_backed": self.device_backed,
+            # Keeps records from being counted twice if the fountain resends a
+            # window across a restart.
+            "seen": sorted(self._seen),
+        }
+
+    def from_dict(self, data: dict, today: date) -> None:
+        """Seed from persisted state after a restart.
+
+        Lifetime figures always come back. Today's figures only do if the
+        stored day is still today, otherwise they are left at zero so a restart
+        after midnight does not resurrect yesterday.
+        """
+        self.total_count = int(data.get("total_count") or 0)
+        self.total_duration = timedelta(seconds=float(data.get("total_duration") or 0.0))
+        self.device_backed = bool(data.get("device_backed"))
+
+        stored_day = data.get("day")
+        day = date.fromisoformat(stored_day) if stored_day else None
+        if day != today:
+            self.day = today
+            return
+
+        self.day = day
+        self.count = int(data.get("count") or 0)
+        self.duration = timedelta(seconds=float(data.get("duration") or 0.0))
+        last_visit = data.get("last_visit")
+        if last_visit:
+            self.last_visit = datetime.fromisoformat(last_visit)
+        self._seen = {int(v) for v in data.get("seen") or ()}
 
     def ingest(self, records, now: datetime) -> bool:
         """Fold in visit records the fountain recorded itself.

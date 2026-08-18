@@ -130,7 +130,8 @@ firmware - visits fall back to being reconstructed from the live `detect_status`
 which is only as good as the sample rate. The moment real records show up the fallback
 stops counting, so the two can never double up.
 
-The daily figures reset at local midnight; the totals do not, and both survive a restart.
+The daily figures reset at local midnight; the totals do not, and both survive a restart -
+they are persisted by the integration itself rather than recovered from entity state.
 Only completed visits count toward them, so the numbers never go backwards. A visit that is
 under way shows up as the `visit_in_progress` and `current_visit_seconds` attributes on the
 daily drinking time instead.

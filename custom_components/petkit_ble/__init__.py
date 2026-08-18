@@ -55,6 +55,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: PetkitBleConfigEntry) ->
         entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
     )
 
+    # Restore visit statistics before any entity can report a value, so a
+    # restart does not briefly publish zero and poison the statistics.
+    await coordinator.async_load_visits()
+
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))

@@ -117,11 +117,14 @@ def test_totals_reset_at_local_midnight():
 
 def test_restore_seeds_todays_totals():
     tracker = VisitTracker()
-    tracker.restore(
-        count=4,
-        duration_seconds=125.5,
-        last_visit=at(-60),
-        day=START.date(),
+    tracker.from_dict(
+        {
+            "count": 4,
+            "duration": 125.5,
+            "last_visit": at(-60).isoformat(),
+            "day": START.date().isoformat(),
+        },
+        START.date(),
     )
     assert tracker.count == 4
     assert tracker.duration == timedelta(seconds=125.5)
@@ -304,7 +307,6 @@ def test_switching_to_device_records_unwinds_estimates_from_totals():
 
 def test_totals_never_go_negative_when_unwinding():
     tracker = VisitTracker()
-    tracker.restore_totals(count=0, duration_seconds=0.0)
     tracker.count = 5
     tracker.duration = timedelta(seconds=99)
 
@@ -316,10 +318,111 @@ def test_totals_never_go_negative_when_unwinding():
 
 def test_restore_totals():
     tracker = VisitTracker()
-    tracker.restore_totals(count=42, duration_seconds=1234.5)
+    tracker.from_dict(
+        {"total_count": 42, "total_duration": 1234.5}, START.date()
+    )
     assert tracker.total_count == 42
     assert tracker.total_duration == timedelta(seconds=1234.5)
 
     tracker.ingest([FakeRecord(60, 10, raw=1)], at(300))
     assert tracker.total_count == 43
     assert tracker.total_duration == timedelta(seconds=1244.5)
+
+
+# --- persistence across restarts -----------------------------------------
+
+
+def _restart(tracker: VisitTracker, today) -> VisitTracker:
+    """Simulate a Home Assistant restart via the persisted payload."""
+    fresh = VisitTracker()
+    fresh.from_dict(tracker.to_dict(), today)
+    return fresh
+
+
+def test_daily_count_survives_a_restart():
+    """Regression: both counters came back as zero after every restart.
+
+    State used to ride on a RestoreSensor's extra data, but overriding that
+    broke async_get_last_sensor_data, so nothing was ever read back.
+    """
+    tracker = VisitTracker()
+    tracker.update(True, at(0))
+    tracker.update(True, at(20))
+    tracker.update(False, at(20 + VISIT_GAP_GRACE.total_seconds() + 1))
+    assert (tracker.count, tracker.total_count) == (1, 1)
+
+    revived = _restart(tracker, START.date())
+
+    assert revived.count == 1, "daily count lost on restart"
+    assert revived.total_count == 1, "lifetime count lost on restart"
+    assert revived.duration == timedelta(seconds=20)
+    assert revived.total_duration == timedelta(seconds=20)
+    assert revived.last_visit is not None
+
+
+def test_restart_after_midnight_keeps_only_lifetime():
+    tracker = VisitTracker()
+    tracker.update(True, at(0))
+    tracker.update(True, at(30))
+    tracker.update(False, at(30 + VISIT_GAP_GRACE.total_seconds() + 1))
+
+    tomorrow = (START + timedelta(days=1)).date()
+    revived = _restart(tracker, tomorrow)
+
+    assert revived.count == 0, "yesterday must not carry over"
+    assert revived.duration == timedelta()
+    assert revived.total_count == 1
+    assert revived.total_duration == timedelta(seconds=30)
+    assert revived.day == tomorrow
+
+
+def test_restart_preserves_dedup_and_source():
+    """Records already banked must not be counted again after a restart."""
+    tracker = VisitTracker()
+    records = [FakeRecord(60, 25, raw=1001)]
+    tracker.ingest(records, at(100))
+
+    revived = _restart(tracker, START.date())
+    assert revived.device_backed, "device-backed flag lost"
+
+    revived.ingest(records, at(200))
+    assert revived.count == 1, "record double-counted after restart"
+    assert revived.total_count == 1
+
+
+def test_counts_continue_after_a_restart():
+    tracker = VisitTracker()
+    tracker.ingest([FakeRecord(60, 25, raw=1)], at(100))
+    revived = _restart(tracker, START.date())
+
+    revived.ingest([FakeRecord(300, 40, raw=2)], at(400))
+
+    assert revived.count == 2
+    assert revived.total_count == 2
+    assert revived.total_duration == timedelta(seconds=65)
+
+
+def test_persisted_payload_is_json_safe():
+    import json
+
+    tracker = VisitTracker()
+    tracker.update(True, at(0))
+    tracker.update(True, at(20))
+    tracker.update(False, at(20 + VISIT_GAP_GRACE.total_seconds() + 1))
+    tracker.ingest([FakeRecord(60, 25, raw=1001)], at(300))
+
+    payload = tracker.to_dict()
+    round_tripped = json.loads(json.dumps(payload))
+
+    revived = VisitTracker()
+    revived.from_dict(round_tripped, START.date())
+    assert revived.total_count == tracker.total_count
+    assert revived.count == tracker.count
+
+
+def test_from_dict_tolerates_missing_keys():
+    tracker = VisitTracker()
+    tracker.from_dict({}, START.date())
+    assert tracker.count == 0
+    assert tracker.total_count == 0
+    assert tracker.day == START.date()

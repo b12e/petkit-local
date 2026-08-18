@@ -10,6 +10,7 @@ from bleak.backends.device import BLEDevice
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -21,6 +22,10 @@ _LOGGER = logging.getLogger(__name__)
 
 # How many polls in a row must fail before entities are marked unavailable.
 MAX_TRANSIENT_FAILURES = 3
+
+STORAGE_VERSION = 1
+# Visit statistics are cheap to lose but noisy to write; batch them up.
+STORAGE_SAVE_DELAY = 30
 
 
 class PetkitBleCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -44,12 +49,32 @@ class PetkitBleCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.rssi: int | None = None
         self.visits = VisitTracker()
         self._failures = 0
+        self._store: Store[dict] = Store(
+            hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}.visits"
+        )
         # Let the client re-resolve the device itself, so a retry can go out
         # through a different Bluetooth proxy rather than the one that just
         # failed.
         fountain.set_device_provider(self._lookup_device)
         fountain.register_push_callback(self._on_push)
         fountain.register_history_callback(self._on_history)
+
+    async def async_load_visits(self) -> None:
+        """Restore visit statistics before any entity reports a value."""
+        stored = await self._store.async_load()
+        if stored:
+            self.visits.from_dict(stored, dt_util.now().date())
+            _LOGGER.debug(
+                "%s: restored visits today=%s total=%s",
+                self.fountain.address,
+                self.visits.count,
+                self.visits.total_count,
+            )
+
+    @callback
+    def _save_visits(self) -> None:
+        """Queue a write of the visit statistics."""
+        self._store.async_delay_save(self.visits.to_dict, STORAGE_SAVE_DELAY)
 
     @callback
     def _lookup_device(self) -> BLEDevice | None:
@@ -88,7 +113,10 @@ class PetkitBleCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def _on_history(self, records: list[Any]) -> None:
         """Bank visit records the fountain recorded while we were away."""
-        if self.visits.ingest(records, dt_util.now()) and self.data is not None:
+        if not self.visits.ingest(records, dt_util.now()):
+            return
+        self._save_visits()
+        if self.data is not None:
             self.async_set_updated_data(dict(self.data))
 
     @callback
@@ -97,7 +125,8 @@ class PetkitBleCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         detected = state.get("detect_status")
         if detected is None:
             return
-        self.visits.update(bool(detected), dt_util.now())
+        if self.visits.update(bool(detected), dt_util.now()):
+            self._save_visits()
 
     def _ble_device(self) -> BLEDevice | None:
         """Find the fountain, or None if we can carry on without it.
