@@ -27,6 +27,16 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Counters the fountain reports as running totals. They occasionally come back
+# a second lower than the reading before them, which Home Assistant reads as a
+# broken total_increasing sensor.
+MONOTONIC_COUNTERS = ("pump_runtime", "pump_runtime_today")
+# How far a counter has to fall before the drop is taken as a genuine reset
+# rather than jitter. The recorder applies the same tenth-of-the-value rule
+# when it decides whether a total was reset, so a held counter never fights
+# the long-term statistics.
+COUNTER_RESET_RATIO = 0.9
+
 
 def _prefers_write_response(client: Any) -> bool:
     """Decide how to write to the control characteristic.
@@ -89,6 +99,7 @@ class PetkitFountain:
         self.state: dict[str, Any] = {}
         self.settings = p.FountainSettings()
         self._settings_known = False
+        self._counter_peaks: dict[str, int] = {}
 
         self._client: BleakClientWithServiceCache | None = None
         self._decoder = p.FrameDecoder()
@@ -632,8 +643,37 @@ class PetkitFountain:
             self._settings_known = True
         self.state.update(self.settings.as_dict())
 
+    def _hold_counters_monotonic(self) -> None:
+        """Keep the runtime counters from stepping backwards.
+
+        The fountain now and then reports a runtime one second below the
+        previous reading. Every figure that hangs off it - purified water and
+        energy - dips with it, and Home Assistant logs each one as a total
+        that is not strictly increasing. Hold the last high-water mark until
+        the device catches up, and let a real reset through: the daily counter
+        at midnight and the lifetime one after a factory reset both fall far
+        enough to tell apart from jitter.
+        """
+        for key in MONOTONIC_COUNTERS:
+            value = self.state.get(key)
+            if value is None:
+                continue
+            peak = self._counter_peaks.get(key)
+            if peak is not None and peak > value >= COUNTER_RESET_RATIO * peak:
+                _LOGGER.debug(
+                    "%s: %s slipped from %s to %s, holding the higher figure",
+                    self.address,
+                    key,
+                    peak,
+                    value,
+                )
+                self.state[key] = peak
+                continue
+            self._counter_peaks[key] = value
+
     def _add_derived(self) -> None:
         """Recompute the figures the cloud would normally hand back."""
+        self._hold_counters_monotonic()
         runtime = self.state.get("pump_runtime")
         runtime_today = self.state.get("pump_runtime_today")
 

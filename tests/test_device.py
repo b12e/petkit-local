@@ -98,6 +98,58 @@ async def test_derived_values(fountain, patched_connection):
     assert state["filter_days_left"] > 0
 
 
+async def test_runtime_jitter_does_not_walk_a_total_backwards(
+    fountain, patched_connection
+):
+    """A second lost off a runtime counter holds, rather than dipping."""
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    first = await client.async_poll(BLE_DEVICE)
+
+    fountain.pump_runtime -= 1
+    fountain.pump_runtime_today -= 1
+    second = await client.async_poll(BLE_DEVICE)
+
+    assert second["pump_runtime"] == first["pump_runtime"]
+    assert second["pump_runtime_today"] == first["pump_runtime_today"]
+    assert second["water_purified"] == first["water_purified"]
+    assert second["water_purified_today"] == first["water_purified_today"]
+    assert second["energy_consumed"] == first["energy_consumed"]
+
+    # The held figure is a floor, not a freeze: growth still comes through.
+    fountain.pump_runtime += 60
+    fountain.pump_runtime_today += 60
+    third = await client.async_poll(BLE_DEVICE)
+
+    assert third["pump_runtime"] == first["pump_runtime"] + 59
+    assert third["water_purified"] > first["water_purified"]
+
+
+async def test_daily_counter_reset_is_let_through(fountain, patched_connection):
+    """Midnight zeroes the daily runtime; that is a reset, not jitter."""
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    await client.async_poll(BLE_DEVICE)
+
+    fountain.pump_runtime_today = 0
+    state = await client.async_poll(BLE_DEVICE)
+
+    assert state["pump_runtime_today"] == 0
+    assert state["water_purified_today"] == 0
+    # The lifetime counter kept climbing across the same boundary.
+    assert state["pump_runtime"] == 100_000
+
+
+async def test_pushed_runtime_is_held_too(fountain, patched_connection):
+    """The clamp covers device-initiated updates, not just polls."""
+    client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")
+    await client.async_poll(BLE_DEVICE)
+
+    await client._connect(BLE_DEVICE)
+    fountain.pump_runtime -= 1
+    patched_connection._emit(fountain.push_status())
+
+    assert client.state["pump_runtime"] == 100_000
+
+
 async def test_set_mode_emits_correct_frame(fountain, patched_connection):
     """Switching to smart mode sends cmd 220 with selector 1."""
     client = PetkitFountain("AA:BB:CC:DD:EE:FF", "CTW3")

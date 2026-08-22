@@ -107,6 +107,12 @@ do-not-disturb active.
 Water and energy figures are computed locally using the same coefficients the PetKit app
 applies, so they should track what the app shows rather than being an independent guess.
 
+The pump runtime counters those figures hang off occasionally come back a second lower than
+the reading before them. A dip like that reads as a broken total, so the last high-water
+mark is held until the fountain catches up; a real reset - the daily counter at midnight, or
+the lifetime one after a factory reset - drops far enough to be told apart and is passed
+straight through.
+
 ## Connection handling
 
 The link is held open by default, which is what makes commands respond immediately rather

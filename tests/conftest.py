@@ -37,6 +37,8 @@ class FakeFountain:
         self.suspend_status = 0
         self.mode = 1
         self.filter_percent = 80
+        self.pump_runtime = 100_000
+        self.pump_runtime_today = 3600
         self.settings = bytearray([15, 30, 0, 45, 0, 90, 1, 2, 0, 0, 1, 1])
 
         self.received: list[p.Frame] = []
@@ -169,10 +171,10 @@ class FakeFountain:
                 0,
                 0,
                 0,  # breakdown, water, low battery, filter warnings
-                *(100_000).to_bytes(4, "big"),
+                *self.pump_runtime.to_bytes(4, "big"),
                 self.filter_percent,
                 1,  # running
-                *(3600).to_bytes(4, "big"),
+                *self.pump_runtime_today.to_bytes(4, "big"),
                 0,  # no pet detected
                 *(5260).to_bytes(2, "big"),
                 *(4200).to_bytes(2, "big"),
